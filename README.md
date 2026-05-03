@@ -1,0 +1,176 @@
+# helixel-mode
+
+Helix-style modal editing for Emacs.
+
+## Install
+
+```elisp
+(use-package helixel
+  :vc (:url "https://github.com/jixiuf/helixel-mode")
+  :config (helixel-mode))
+```
+
+Or manually:
+
+```elisp
+(add-to-list 'load-path "/path/to/helixel-mode")
+(require 'helixel)
+(helixel-mode)
+```
+
+Requires Emacs >= 29.1.
+
+## Usage
+
+| Key | Action |
+|-----|--------|
+| `h` `j` `k` `l` | Move |
+| `w` `b` `e` | Word forward / back / end |
+| `W` `B` `E` | WORD forward / back / end |
+| `f` `t` `F` `T` | Find char |
+| `m i` `m a` | Text objects (word, symbol, sentence, paragraph, pairs, quotes, tags) |
+| `;` | Set mark to previous session start |
+| `M-.` | Repeat last find-char |
+| `n` `N` | Repeat / reverse direction repeat (`C-u n` pick from history) |
+| `g` | Goto prefix |
+| `SPC` | Space prefix (LSP / project) |
+| `C-w` | Window prefix |
+| `:` | ex commands |
+| `ESC` | Normal mode |
+
+### States
+
+| State | Description |
+|-------|-------------|
+| normal | Default editing state |
+| insert | Text input |
+| visual | Selection mode |
+| motion | Read-only navigation |
+
+### Search & Repeat
+
+**`n` / `N`** — repeat search or find-char.  
+**`C-u n` / `C-u N`** — pick from combined search/find-char history.
+
+| Key | Context | Behavior |
+|-----|---------|----------|
+| `n` | After `/` or `?` | Repeat search forward |
+| `N` | After `/` or `?` | Reverse direction then repeat |
+| `n` | After `f`/`F`/`t`/`T` | Repeat find-char forward |
+| `N` | After `f`/`F`/`t`/`T` | Reverse direction then repeat find-char |
+| `C-u n` | anytime | Pick from combined history & execute |
+| `C-u N` | anytime | Toggle direction + pick from history |
+
+`N` flips the search direction; subsequent `n` continues in the new direction.
+
+The history ring (`helixel--action-ring`) merges search regexps (`/ ? * #`)
+and find-char entries (`f F t T`) into one list.  Entries appear as `/pattern/`
+for searches, or `f→X` / `F→X` / `t→X` / `T→X` for find-char (case indicates
+original direction: lowercase = forward, uppercase = backward).
+Selecting a find-char entry replays it with `next`/`till` semantics.
+
+- `C-u n` executes in the entry's stored direction.
+- `C-u N` toggles the stored direction, then executes.
+- When `N` or `C-u N` toggles the direction of the most recent entry,
+  the ring entry is also flipped to reflect the new direction.
+- Ring size is controlled by `helixel-action-ring-max` (default 50).
+
+Examples:
+```
+/foo<RET>   search "foo"
+n           next match forward
+n           next match forward
+N           reverse direction, go back to previous match
+n           continue backward (next in reversed direction)
+
+fb          find next "b"
+n           find next "b" again
+N           reverse direction, find previous "b"
+n           continue backward
+
+C-u n       pick a past search/find-char from history
+```
+
+### Session Mark (`;`)
+
+`;` sets the mark at where a movement sequence started. Point stays
+in place — the region shows where you came from. Same-type movements
+share a session; different types start new ones.
+
+| Key | Behavior |
+|-----|----------|
+| `;` | Set mark to start of current session (push live → ring, show ring[0]) |
+| `;` again | Set mark to older session start |
+| `;` again | Set mark further back ... |
+| `C-u ;` | Set mark to newer session start |
+| `C-u ;` (at newest) | Restore live session mark |
+
+**Session types** (pressing `;` sets mark to independent start positions):
+
+| Category | Session type | Keys |
+|----------|-------------|------|
+| char | `movement-char` | `h` `l` |
+| line | `movement-line` | `j` `k` |
+| word | `movement-word` | `w` `e` `b` |
+| WORD | `movement-WORD` | `W` `E` `B` |
+| symbol | `movement-symbol` | (unbound) |
+| goto | `movement-goto` | `g` prefix, `G` |
+| scroll | `movement-scroll` | `C-f` `C-b` |
+| line select | `movement-lineselect` | `x` `X` |
+| textobj-word | `textobj-word` | `miw` `maw` |
+| textobj-WORD | `textobj-WORD` | `miW` `maW` |
+| textobj-symbol | `textobj-symbol` | `mio` `mao` |
+| textobj-sentence | `textobj-sentence` | `mis` `mas` |
+| textobj-paragraph | `textobj-paragraph` | `mip` `map` |
+| textobj-pair | `textobj-pair` | `mi(` `ma(` `mi[` `ma[` `mi{` `ma{` `mi<` `ma<` |
+| textobj-quote | `textobj-quote` | `mi"` `ma"` `mi'` `ma'` ``mi` `` ``ma` `` |
+| textobj-tag | `textobj-tag` | `mit` `mat` |
+| search | `search` | `/` `?` `*` `#` then `n`/`N` |
+| find-char | `find-char` | `f` `F` `t` `T` then `n`/`N`/`M-.` |
+
+`C-g` cancels the current session — the next command starts a fresh session
+even if the type matches. The cancelled session is preserved in the ring for
+`;` to jump back to.
+
+Examples:
+```
+w w         move forward two words
+;           mark start of this w w session
+
+j j         move down two lines
+;           mark start of j j (NOT the w w start!)
+;           again: mark start of w w
+C-u ;       back to j j mark
+
+f x         find char "x"
+n           next "x"
+n           next "x"
+;           mark start of this find session
+
+;           again: older session ...
+
+w w         move two words (same session, shared start position)
+C-g         cancel session — next command starts fresh
+w           new session, new start position
+;           mark start of this new w
+;           again: mark start of the old w w
+```
+
+### Ex Commands
+
+`:w` write, `:q` quit, `:wq` write-quit, `:o` open file, `:n` scratch buffer, `:vs` vsplit, `:hs` hsplit, `:rl` reload buffer, `:reload-all` reload all, `:pwd` show directory, `:config-open` open init.el.
+
+## Extend
+
+```elisp
+;; Add a keybinding
+(helixel-define-key 'space "w" #'my-command)
+
+;; Add a typable command
+(helixel-define-ex-command "format" #'format-all-buffer)
+
+;; Wrap a builtin movement with session tracking (supports ;)
+(helixel-define-movement helixel-forward-paragraph forward-paragraph movement-goto)
+(helixel-define-key 'normal "]" #'helixel-forward-paragraph)
+```
+
