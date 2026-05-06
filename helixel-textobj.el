@@ -201,7 +201,7 @@ an empty line matching ^$."
          (if (= pnt (point)) cnt 0)))
    #'(lambda (&optional cnt)
        (helixel-forward-chars "^[:word:]\n\r\t\f " cnt))
-    #'helixel--forward-empty-line))
+   #'helixel--forward-empty-line))
 (put 'helixel-word 'forward-op #'helixel--forward-word)
 
 (defun helixel--forward-WORD (&optional count)
@@ -212,9 +212,9 @@ forward) or at the first character of the WORD (if backward).  A
 WORD is a sequence of non-whitespace characters
 '[^\\n\\r\\t\\f ]', or an empty line matching ^$."
   (helixel-forward-nearest count
-                        #'(lambda (&optional cnt)
-                            (helixel-forward-chars "^\n\r\t\f " cnt))
-                         #'helixel--forward-empty-line))
+                           #'(lambda (&optional cnt)
+                               (helixel-forward-chars "^\n\r\t\f " cnt))
+                           #'helixel--forward-empty-line))
 (put 'helixel-WORD 'forward-op #'helixel--forward-WORD)
 
 (defun helixel--forward-beginning (thing &optional count)
@@ -341,9 +341,9 @@ selection."
       (setq count (if (> count 0) (1- count) (1+ count))))
     (goto-char (if (< count 0) beg end))
     (helixel-forward-nearest count
-                          #'(lambda (cnt) (forward-thing thing cnt))
-                          #'(lambda (cnt)
-                              (helixel-forward-not-thing thing cnt)))
+                             #'(lambda (cnt) (forward-thing thing cnt))
+                             #'(lambda (cnt)
+                                 (helixel-forward-not-thing thing cnt)))
     (cons (if (>= count 0) beg (point))
           (if (< count 0) end (point)))))
 
@@ -476,7 +476,7 @@ syntax classes."
        (let ((pnt (point)))
          (forward-symbol cnt)
          (if (= pnt (point)) cnt 0)))
-    #'helixel--forward-empty-line))
+   #'helixel--forward-empty-line))
 (put 'helixel-symbol 'forward-op #'helixel--forward-symbol)
 
 (defun helixel-forward-syntax (syntax &optional count)
@@ -521,7 +521,7 @@ if COUNT is negative.  A paragraph is defined by
   (helixel-motion-loop (dir (or count 1))
     (cond
      ((> dir 0) (forward-paragraph))
-      ((not (bobp)) (start-of-paragraph-text) (beginning-of-line)))))
+     ((not (bobp)) (start-of-paragraph-text) (beginning-of-line)))))
 (put 'helixel-paragraph 'forward-op #'helixel--forward-paragraph)
 
 ;; ============================================================================
@@ -666,10 +666,10 @@ end of the line of OP and at the beginning of the line of CL."
    (t (user-error "Unknown selection-type `%s'" selection-type))))
 
 (defun helixel-select-block (thing beg end type count
-                                &optional
-                                selection-type
-                                countcurrent
-                                fixedscan)
+                                   &optional
+                                   selection-type
+                                   countcurrent
+                                   fixedscan)
   "Return a range (BEG END) of COUNT delimited text objects.
 BEG END TYPE are the currently selected (visual) range.  The
 delimited object must be given by THING-up function (see
@@ -863,16 +863,16 @@ is ignored."
                     (let ((extbeg (min beg (car bnd)))
                           (extend (max end (cdr bnd))))
                       (helixel-select-block thing
-                                         extbeg extend
-                                         type
-                                         count
-                                         inclusive
-                                         (or (< extbeg beg) (> extend end))
-                                         t)))))))
+                                            extbeg extend
+                                            type
+                                            count
+                                            inclusive
+                                            (or (< extbeg beg) (> extend end))
+                                            t)))))))
          (t
           (helixel-select-block #'(lambda (&optional cnt)
-                                 (helixel-up-block open close cnt))
-                             beg end type count inclusive))))
+                                    (helixel-up-block open close cnt))
+                                beg end type count inclusive))))
     (error ; we aren't in the parens, so find next instance
      (save-match-data
        (goto-char (or (if (and count (> 0 count)) end beg)
@@ -884,7 +884,7 @@ is ignored."
                (goto-char (match-beginning 0))
                (let* ((mbeg (match-beginning 0))
                       (res (helixel-select-paren open close mbeg mbeg
-                                              type nil inclusive)))
+                                                 type nil inclusive)))
                  (if (< (car res) mbeg)
                      ;; Error if found paren begins before target.
                      ;; Prevents g2ci( on `prova ( verder "((testo)")`
@@ -1066,18 +1066,18 @@ INCLUSIVE indicates whether to include the delimiters."
           (if (and wsboth (setq bnd (bounds-of-thing-at-point 'helixel-space)))
               (if (> dir 0) (setq beg (car bnd)) (setq end (cdr bnd)))))))
       (helixel-range beg end
-                  ;; HACK: fixes #583
-                  ;; When not in visual state, an empty range is
-                  ;; possible.  However, this cannot be achieved with
-                  ;; inclusive ranges, hence we use exclusive ranges
-                  ;; in this case.  In visual state the range must be
-                  ;; inclusive because otherwise the selection would
-                  ;; be wrong.
-                  (if (and helixel-textobj-visual-state-p-function
-                           (funcall helixel-textobj-visual-state-p-function))
-                      'inclusive
-                    'exclusive)
-                  :expanded t))))
+                     ;; HACK: fixes #583
+                     ;; When not in visual state, an empty range is
+                     ;; possible.  However, this cannot be achieved with
+                     ;; inclusive ranges, hence we use exclusive ranges
+                     ;; in this case.  In visual state the range must be
+                     ;; inclusive because otherwise the selection would
+                     ;; be wrong.
+                     (if (and helixel-textobj-visual-state-p-function
+                              (funcall helixel-textobj-visual-state-p-function))
+                         'inclusive
+                       'exclusive)
+                     :expanded t))))
 
 (defun helixel-select-quote (quote beg end type count &optional inclusive)
   "Return a range (BEG END) of COUNT quoted text objects.
@@ -1115,9 +1115,9 @@ preceeding (or following) whitespace is added to the range."
                               inclusive)))))
         (let ((helixel-forward-quote-char quote))
           (helixel-select-quote-thing 'helixel-quote
-                                   beg end type
-                                   count
-                                   inclusive)))))
+                                      beg end type
+                                      count
+                                      inclusive)))))
 (defun helixel-range-p (object)
   "Whether OBJECT is a range."
   (and (listp object)
@@ -1227,6 +1227,37 @@ match (that caused COUNT to reach zero)."
       (goto-char (if (> dir 0) (point-max) (point-min)))
       (if (/= (point) orig) (setq count (1- count))))
     (* dir count)))
+(defun helixel--use-region-p()
+  "Return non-nil when in visual state and the region is active."
+  (and (use-region-p)
+       helixel-textobj-visual-state-p-function
+       (funcall helixel-textobj-visual-state-p-function)))
+
+(defun helixel--region-has-content-p ()
+  "Return non-nil if the active region contains non-whitespace chars."
+  (and (region-active-p)
+       (let ((end (region-end)))
+         (< (region-beginning) end)
+         (save-excursion
+           (goto-char (region-beginning))
+           (re-search-forward "[^ \t\n\r\f]" end t)))))
+
+(defun helixel--ensure-point-in-thing ()
+  "Adjust point so `bounds-of-thing-at-point' finds the current thing.
+If region is active with content and point is at or past `region-end',
+move point into the region content.  Otherwise if point is on
+whitespace, skip whitespace backward then backward one char."
+  (cond
+   ((and (region-active-p) (>= (point) (region-end))
+         (helixel--region-has-content-p))
+    (goto-char (region-end))
+    (skip-chars-backward " \t\n\r\f")
+    (when (and (not (bobp)) (> (point) (region-beginning)))
+      (backward-char)))
+   ((looking-at "[ \t\n\r\f]")
+    (skip-chars-backward " \t\n\r\f")
+    (unless (bobp)
+      (backward-char)))))
 
 (defmacro helixel-define-mark-pair (name open close doc inner-p)
   "Define mark inner/a functions for a pair of brackets.
@@ -1241,14 +1272,17 @@ pair.  INNER-P non-nil means inner, nil means a."
                           doc))
         (inclusive (if inner-p nil t)))
     `(progn
-        (defun ,func-name (&optional count)
-          ,func-doc
-          (interactive "p")
-          (when helixel-textobj-action-function
-            (funcall helixel-textobj-action-function 'textobj 'pair))
-          (let* ((range (helixel-select-paren ,open ,close
-                                          nil nil
-                                          nil count ,inclusive)))
+       (defun ,func-name (&optional count)
+         ,func-doc
+         (interactive "p")
+         (when helixel-textobj-action-function
+           (funcall helixel-textobj-action-function 'textobj 'pair))
+         (let* ((range (helixel-select-paren ,open ,close
+                                             (when (helixel--use-region-p)
+                                               (region-beginning))
+                                             (when (helixel--use-region-p)
+                                               (region-end))
+                                             nil count ,inclusive)))
            (when range
              (push-mark (car range) nil t)
              (goto-char (cadr range))))))))
@@ -1266,14 +1300,17 @@ INNER-P non-nil means inner, nil means a."
                           doc))
         (inclusive (if inner-p nil t)))
     `(progn
-        (defun ,func-name (&optional count)
-          ,func-doc
-          (interactive "p")
-          (when helixel-textobj-action-function
-            (funcall helixel-textobj-action-function 'textobj 'quote))
-          (let* ((range (helixel-select-quote ,quote-char
-                                          nil nil
-                                          nil count ',inclusive)))
+       (defun ,func-name (&optional count)
+         ,func-doc
+         (interactive "p")
+         (when helixel-textobj-action-function
+           (funcall helixel-textobj-action-function 'textobj 'quote))
+         (let* ((range (helixel-select-quote ,quote-char
+                                             (when (helixel--use-region-p)
+                                               (region-beginning))
+                                             (when (helixel--use-region-p)
+                                               (region-end))
+                                             nil count ',inclusive)))
            (when range
              (push-mark (car range) nil t)
              (goto-char (cadr range))))))))
@@ -1296,31 +1333,51 @@ RESTRICTED-P non-nil means use restricted version (for word/WORD)."
                         'helixel-select-a-restricted-object
                       'helixel-select-a-object)))
     `(progn
-        (defun ,inner-name (&optional count)
-          ,inner-doc
-          (interactive "p")
-          (when helixel-textobj-action-function
-            (funcall helixel-textobj-action-function 'textobj ,subcat))
-          (let* ((range (,inner-func ,thing nil nil count)))
-            (when range
-              (push-mark (car range) nil t)
-              (goto-char (cdr range)))))
+       (defun ,inner-name (&optional count)
+         ,inner-doc
+         (interactive "p")
+         (when helixel-textobj-action-function
+           (funcall helixel-textobj-action-function 'textobj ,subcat))
+         (let ((use-bounds (helixel--use-region-p))
+               (followup-p (and (use-region-p)
+                                (eq (helixel--selection-type) 'textobj))))
+           (cond
+            (followup-p
+             (goto-char (region-end))
+             (skip-chars-forward " \t\n\r\f"))
+            ((not use-bounds)
+             (helixel--ensure-point-in-thing)))
+           (let ((beg (when use-bounds (region-beginning)))
+                 (end (when use-bounds (region-end))))
+             (let* ((range (,inner-func ,thing beg end count)))
+               (when range
+                 (push-mark (car range) nil t)
+                 (goto-char (cdr range))
+                 (setq helixel--selection-type 'textobj))))))
        (defun ,outer-name (&optional count)
-          ,outer-doc
-          (interactive "p")
-          (when helixel-textobj-action-function
-            (funcall helixel-textobj-action-function 'textobj ,subcat))
-          (let* ((range (,outer-func ,thing nil nil count)))
-           (when range
-             (push-mark (car range) nil t)
-              (goto-char (cdr range))))))))
+         ,outer-doc
+         (interactive "p")
+         (when helixel-textobj-action-function
+           (funcall helixel-textobj-action-function 'textobj ,subcat))
+         (let ((use-bounds (helixel--use-region-p))
+               (followup-p (and (use-region-p)
+                                (eq (helixel--selection-type) 'textobj))))
+           (unless (or use-bounds followup-p)
+             (helixel--ensure-point-in-thing))
+           (let ((beg (when use-bounds (region-beginning)))
+                 (end (when use-bounds (region-end))))
+             (let* ((range (,outer-func ,thing beg end count)))
+               (when range
+                 (push-mark (car range) nil t)
+                 (goto-char (cdr range))
+                 (setq helixel--selection-type 'textobj)))))))))
 
 (helixel-define-mark-object "word" 'helixel-word "word" 'word t)
 (helixel-define-mark-object "WORD" 'helixel-WORD "WORD" 'WORD t)
 (helixel-define-mark-object "symbol" 'helixel-symbol "symbol" 'symbol)
 (helixel-define-mark-object "sentence" 'helixel-sentence "sentence" 'sentence)
 (helixel-define-mark-object "paragraph" 'helixel-paragraph
-  "paragraph" 'paragraph)
+                            "paragraph" 'paragraph)
 
 (helixel-define-mark-pair "paren" ?\( ?\) "parenthesis" t)
 (helixel-define-mark-pair "paren" ?\( ?\) "parenthesis" nil)
@@ -1350,7 +1407,8 @@ COUNT is the number of tags to select."
   (when helixel-textobj-action-function
     (funcall helixel-textobj-action-function 'textobj 'tag))
   (let* ((range (helixel-select-xml-tag
-                 nil nil
+                 (when (helixel--use-region-p) (region-beginning))
+                 (when (helixel--use-region-p) (region-end))
                  nil count nil)))
     (when range
       (push-mark (car range) nil t)
@@ -1362,7 +1420,8 @@ COUNT is the number of tags to select."
   (when helixel-textobj-action-function
     (funcall helixel-textobj-action-function 'textobj 'tag))
   (let* ((range (helixel-select-xml-tag
-                 nil nil
+                 (when (helixel--use-region-p) (region-beginning))
+                 (when (helixel--use-region-p) (region-end))
                  nil count t)))
     (when range
       (push-mark (car range) nil t)

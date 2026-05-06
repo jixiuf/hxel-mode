@@ -425,7 +425,7 @@ execute in the opposite of the entry's stored direction."
 ;; ── C-u n / C-u N  from-history ──
 
 (defun helixel-search--history-collect ()
-  "Return an alist of (display-string . action-plist) for valid repeatable entries."
+  "Return alist of (display . action) for valid repeatable entries."
   (let ((actions (cl-remove-if-not
                   (lambda (a)
                     (and (memq (helixel--action-get a :category)
@@ -452,8 +452,9 @@ Returns the chosen action plist or nil."
 
 (defun helixel-search--history-execute (action use-dir)
   "Execute ACTION (a ring entry) in direction USE-DIR.
-For search entries, sets up `isearch-string'/`isearch-regexp'/`isearch-forward'
-(let-bound) so that `helixel-search--handle-done' handles the region
+For search entries, sets up `isearch-string' and `isearch-regexp' and
+`variable isearch-forward'
+\(let-bound) so that `helixel-search--handle-done' handles the region
 consistent with / ? * #.  Stores the pattern in `helixel--repeat-data'
 so that subsequent n/N picks it up via `helixel-search--isearch-repeat'."
   (let ((cat (helixel--action-get action :category)))

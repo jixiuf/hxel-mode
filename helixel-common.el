@@ -416,7 +416,9 @@ Supports `line' and `rect'."
             (end (region-end)))
         (when (and (save-excursion (goto-char beg) (bolp))
                    (save-excursion (goto-char end) (or (eolp) (eobp))))
-          'line))))))
+          'line)))
+     ((eq helixel--selection-type 'textobj)
+      'textobj))))
 
 (defun helixel--yank-handler-line-wise (text)
   "Insert TEXT as a complete line.

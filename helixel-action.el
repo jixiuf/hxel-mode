@@ -285,13 +285,17 @@ RING SAFETY: Old actions are deep-copied before pushing.
 The new live action is a fresh plist, never aliased to any
 ring entry."
   (let* ((prev-type (when helixel--action
-                      (cons (plist-get helixel--action :category)
-                            (plist-get helixel--action :subcat))))
+                       (cons (plist-get helixel--action :category)
+                             (plist-get helixel--action :subcat))))
          (this-type (cons category subcat))
          (continuing (equal prev-type this-type))
          (marker (or (and continuing (plist-get helixel--action :marker))
                      (point-marker)))
          (action `(:category ,category :subcat ,subcat :marker ,marker)))
+    ;; Any non-textobj action clears textobj selection state
+    (when (and (eq helixel--selection-type 'textobj)
+               (not (eq category 'textobj)))
+      (setq helixel--selection-type nil))
     ;; Push old action to ring when type changes, unless meaningless.
     (when (and helixel--action (not (equal prev-type this-type))
                (helixel--action-valid-p helixel--action))

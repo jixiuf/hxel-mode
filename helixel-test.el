@@ -1844,8 +1844,49 @@ Second paragraph.")
     (goto-char 7)
     (setq last-command nil this-command 'helixel-mark-inner-single-quote)
     (call-interactively #'helixel-mark-inner-single-quote)
-    (should (= (region-beginning) 6))
-    (should (= (region-end) 11))))
+     (should (= (region-beginning) 6))
+     (should (= (region-end) 11))))
+
+;;; Textobj: region-active prioritizes highlighted content
+
+(ert-deftest helixel-test-textobj-region-active-prio-inner ()
+  "When region is active with content, textobj selects the region content."
+  (helixel-test-with-buffer "hello world"
+    (push-mark 1 nil t)
+    (goto-char 7)
+    (call-interactively #'helixel-mark-inner-word)
+    (should (= (region-beginning) 1))
+    (should (= (region-end) 6))))
+
+(ert-deftest helixel-test-textobj-followup-selects-next-inner ()
+  "Second textobj press selects the next word, not expand."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 1)
+    (call-interactively #'helixel-mark-inner-word)
+    (should (= (region-beginning) 1))
+    (should (= (region-end) 6))
+    (call-interactively #'helixel-mark-inner-word)
+    (should (= (region-beginning) 7))
+    (should (= (region-end) 12))))
+
+(ert-deftest helixel-test-textobj-whitespace-adjust ()
+  "Cursor on whitespace finds the adjacent word."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 6)
+    (call-interactively #'helixel-mark-inner-word)
+    (should (= (region-beginning) 1))
+    (should (= (region-end) 6))))
+
+(ert-deftest helixel-test-textobj-followup-selects-next-outer ()
+  "Second a-word press selects the next a-word, not expand."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 1)
+    (call-interactively #'helixel-mark-a-word)
+    (should (= (region-beginning) 1))
+    (should (= (region-end) 7))
+    (call-interactively #'helixel-mark-a-word)
+    (should (= (region-beginning) 7))
+    (should (= (region-end) 13))))
 
 ;;; Text object action tests
 

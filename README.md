@@ -47,6 +47,23 @@ Requires Emacs >= 29.1.
 | visual | Selection mode |
 | motion | Read-only navigation |
 
+### Text Objects
+
+`m i` (inner) and `m a` (a / around) select text objects.  Supports
+word (`w`), WORD (`W`), symbol (`o`), sentence (`s`), paragraph (`p`),
+pairs (`(` `[` `{` `<`), quotes (`\"` `'` `` \` ``), and tags (`t`).
+
+**Region-aware selection** — in normal mode when a region is already
+active, the first press selects the text object **within the highlighted
+region** instead of what is at point.  This means:
+
+- `hello |world` with region `hello ` active: `miw` selects `hello`.
+- Second press (follow-up): selects the **next** word without expanding.
+- In **visual** mode: pressing repeatedly **expands** the selection.
+
+White space adjustment: cursor on whitespace between words automatically
+finds the adjacent word.
+
 ### Search & Repeat
 
 **`n` / `N`** — repeat search or find-char.  
