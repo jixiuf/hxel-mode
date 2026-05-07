@@ -37,11 +37,6 @@
 (require 'helixel-action)
 (require 'helixel-textobj)
 
-(declare-function helixel--repeat-post-hook "helixel-repeat")
-(declare-function helixel--repeat-reset-snapshot "helixel-repeat")
-(declare-function helixel-repeat-execute "helixel-repeat")
-(declare-function helixel-repeat-disable "helixel-repeat")
-
 
 (defcustom helixel-major-mode-default-states '((calc-mode . insert))
   "Alist mapping major modes to default Helixel states.
@@ -848,8 +843,6 @@ Example with multiple callbacks:
     (define-key keymap "p" #'helixel-yank)
     (define-key keymap "P" #'helixel-yank-before)
 
-    (define-key keymap "." #'helixel-repeat-execute)
-
     (define-key keymap "x" #'helixel-select-line)
     (define-key keymap "v" #'helixel-begin-selection)
     (define-key keymap (kbd "C-v") #'helixel-select-rectangle)
@@ -1138,18 +1131,14 @@ The default state is determined by `helixel--default-state-for-buffer'."
   (when (and (not (minibufferp)) helixel-global-mode)
     (if (and status (<= status 0))
         ;; Deactivate current state
-        (progn
-          (let ((mode (alist-get helixel--current-state
-                                 helixel-state-mode-alist)))
-            (funcall mode -1))
-          (remove-hook 'post-command-hook #'helixel--repeat-post-hook t))
+        (let ((mode (alist-get helixel--current-state
+                               helixel-state-mode-alist)))
+          (funcall mode -1))
       ;; Activate default state
       (let* ((state (helixel--default-state-for-buffer))
              (mode (alist-get state helixel-state-mode-alist)))
         (funcall mode (if status status 1))
-        (helixel--refresh-overriding-maps)
-        (helixel--repeat-reset-snapshot)
-        (add-hook 'post-command-hook #'helixel--repeat-post-hook nil t)))))
+        (helixel--refresh-overriding-maps)))))
 
 ;;;###autoload
 (defun helixel-mode-all (&optional status)
@@ -1188,8 +1177,7 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
      (helixel-visual-mode (helixel-visual-mode -1)))
     (advice-remove #'keyboard-quit #'helixel--clear-data)
     (advice-remove #'keyboard-quit #'helixel--cancel-action)
-    (remove-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)
-    (helixel-repeat-disable)))
+    (remove-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)))
 
 (provide 'helixel-common)
 ;;; helixel-common.el ends here
