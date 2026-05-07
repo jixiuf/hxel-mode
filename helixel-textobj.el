@@ -1475,7 +1475,7 @@ pair.  INNER-P non-nil means inner, nil means a."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj))))))))
+             (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj))))))))
 
 (defmacro helixel-define-mark-quote (name quote-char doc inner-p)
   "Define mark inner/a functions for a quote character.
@@ -1505,7 +1505,7 @@ INNER-P non-nil means inner, nil means a."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj))))))))
+             (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj))))))))
 
 (defmacro helixel-define-mark-object
     (name thing doc subcat &optional restricted-p)
@@ -1546,7 +1546,7 @@ RESTRICTED-P non-nil means use restricted version (for word/WORD)."
                  (push-mark (car range) nil t)
                  (goto-char (cdr range))
                  (setq helixel--selection-type 'textobj)
-                 (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj)))))))
+                 (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))))
        (defun ,outer-name (&optional count)
          ,outer-doc
          (interactive "p")
@@ -1564,7 +1564,7 @@ RESTRICTED-P non-nil means use restricted version (for word/WORD)."
                  (push-mark (car range) nil t)
                  (goto-char (cdr range))
                  (setq helixel--selection-type 'textobj)
-                 (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj))))))))))
+                 (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj))))))))))
 
 (helixel-define-mark-object "word" 'helixel-word "word" 'word t)
 (helixel-define-mark-object "WORD" 'helixel-WORD "WORD" 'WORD t)
@@ -1608,7 +1608,7 @@ COUNT is the number of tags to select."
       (push-mark (car range) nil t)
       (goto-char (cadr range))
       (setq helixel--selection-type 'textobj)
-      (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj)))))
+      (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
 (defun helixel-mark-a-tag (&optional count)
   "Select a tag.
 COUNT is the number of tags to select."
@@ -1623,7 +1623,7 @@ COUNT is the number of tags to select."
       (push-mark (car range) nil t)
       (goto-char (cadr range))
       (setq helixel--selection-type 'textobj)
-      (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj)))))
+      (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
 
 ;; ============================================================================
 ;; Generic Block Text Objects (org blocks, markdown fences, etc.)
@@ -1798,7 +1798,7 @@ COUNT is the number of blocks to select."
       (push-mark (car range) nil t)
       (goto-char (cadr range))
       (setq helixel--selection-type 'textobj)
-      (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj)))))
+      (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
 
 (defun helixel-mark-a-block (&optional count)
   "Select a block (org block, markdown fence, etc.).
@@ -1814,7 +1814,7 @@ COUNT is the number of blocks to select."
       (push-mark (car range) nil t)
       (goto-char (cadr range))
       (setq helixel--selection-type 'textobj)
-      (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj)))))
+      (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
 
 (defmacro helixel-define-regex-textobj (key name begin-re end-re
                                             &optional name-group
@@ -1847,7 +1847,7 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj)))))
+             (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
        (defun ,outer-name (&optional count)
          ,outer-doc
          (interactive "p")
@@ -1862,7 +1862,7 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx (list :fn this-command :type 'textobj)))))
+             (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
        (define-key helixel-textobj-inner-map ,key #',inner-name)
        (define-key helixel-textobj-outer-map ,key #',outer-name))))
 

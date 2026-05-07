@@ -2932,7 +2932,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (goto-char 3)
     (setq helixel--last-edit
           `(:operator change
-                      :sel-ctx (:fn helixel-mark-inner-word :type textobj)
+                      :sel-ctx (:fn helixel-mark-inner-word :kind textobj)
                       :change-text "CHANGED"))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "CHANGED world foo"))
@@ -3002,7 +3002,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (goto-char 1)
     (setq helixel--last-edit
           `(:operator kill
-                      :sel-ctx (:type movement
+                      :sel-ctx (:kind movement
                                 :moves ((helixel-forward-word-start . 2)))))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "foo"))))
@@ -3013,7 +3013,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (goto-char 1)
     (setq helixel--last-edit
           `(:operator change
-                      :sel-ctx (:type movement
+                      :sel-ctx (:kind movement
                                 :moves ((helixel-forward-word-start . 1)))
                       :change-text "X"))
     (helixel-repeat-edit)

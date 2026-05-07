@@ -1,7 +1,7 @@
 EMACS ?= emacs
 
-FILES = helixel-action.el helixel-common.el helixel-search.el helixel-textobj.el helixel.el
-ELS := helixel-action.elc helixel-common.elc helixel-search.elc helixel-textobj.elc helixel.elc
+FILES = helixel-action.el helixel-repeat.el helixel-common.el helixel-search.el helixel-textobj.el helixel.el
+ELS := helixel-action.elc helixel-repeat.elc helixel-common.elc helixel-search.elc helixel-textobj.elc helixel.elc
 
 DEPS = package-lint
 

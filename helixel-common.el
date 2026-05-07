@@ -36,6 +36,7 @@
 (require 'rect)
 (require 'helixel-action)
 (require 'helixel-textobj)
+(require 'helixel-repeat)
 
 
 (defcustom helixel-major-mode-default-states '((calc-mode . insert))
@@ -74,38 +75,11 @@ at point (t) or simply insert without deleting (nil)."
   "Current selection type.
 nil means charwise, `line' means linewise, `rect' means rectangle.")
 
-(defvar-local helixel--repeat-sel-ctx nil
-  "Plist describing how to recreate the current selection for dot-repeat.
-Set by textobj / linewise / rect selection commands.
-Read and consumed by editing commands.
-
-Keys:
-  :fn    function  ;; no-arg function that creates the selection at point
-  :type  symbol    ;; textobj | line | rect")
-
 (defvar-local helixel--rect-replay-data nil
   "Plist for rect change replay: (:col N :line-count N).")
 
 (defvar-local helixel--rect-replay-marker nil
   "Marker at insertion point before entering insert for rect change.")
-
-(defvar-local helixel--last-edit nil
-  "Plist describing the last edit for dot-repeat (`.`).
-
-Keys:
-  :operator    symbol   ;; kill|change|copy|replace|paste-after|paste-before
-                        ;; |indent-left|indent-right|replace-char
-  :sel-ctx     plist|nil  ;; (:fn FUNCTION :type SYMBOL), nil if no selection
-  :change-text string|nil ;; text inserted during `c` change
-  :replace-char char|nil  ;; char for `R` replace-char")
-
-(defvar-local helixel--change-track-marker nil
-  "Marker at position before entering insert during a change operation.
-Used to extract :change-text in `helixel-insert-exit'.")
-
-(defvar helixel--inhibit-repeat-record nil
-  "When non-nil, `helixel--record-edit' is a no-op.
-Bound during `helixel-repeat-edit' to prevent re-recording.")
 
 (defvar helixel-global-mode nil
   "Enable Helixel mode in all buffers.")
@@ -158,14 +132,14 @@ Accumulates consecutive same-command moves by incrementing count."
   (when (eq helixel--current-state 'visual)
     (let ((ctx helixel--repeat-sel-ctx)
           (entry (cons cmd 1)))
-      (if (and ctx (eq (plist-get ctx :type) 'movement))
+      (if (and ctx (eq (plist-get ctx :kind) 'movement))
           (let* ((moves (plist-get ctx :moves))
                  (last (car moves)))
             (if (and last (eq (car last) cmd))
                 (setcdr last (1+ (cdr last)))
               (plist-put ctx :moves (cons entry moves))))
         (setq helixel--repeat-sel-ctx
-              `(:type movement :moves (,entry)))))))
+              `(:kind movement :moves (,entry)))))))
 
 (defun helixel-insert ()
   "Switch to insert state at the beginning of the selection."
@@ -422,7 +396,7 @@ If a region is already active, no new region is created."
     (push-mark-command t t)
     (end-of-line))
   (setq helixel--selection-type 'line)
-  (setq helixel--repeat-sel-ctx (list :fn this-command :type 'line)))
+  (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'line)))
 
 (defun helixel-select-line-up ()
   "Select the current line, extending upward on every subsequent call."
@@ -437,7 +411,7 @@ If a region is already active, no new region is created."
     (push-mark-command t t)
     (beginning-of-line))
   (setq helixel--selection-type 'line)
-  (setq helixel--repeat-sel-ctx (list :fn this-command :type 'line)))
+  (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'line)))
 
 (defun helixel-select-rectangle ()
   "Start or extend rectangle selection.
@@ -457,7 +431,7 @@ down one line.  Otherwise, start a rectangle selection at point."
     (push-mark (point) t t)
     (rectangle-mark-mode 1))
   (setq helixel--selection-type 'rect)
-  (setq helixel--repeat-sel-ctx (list :fn this-command :type 'rect)))
+  (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'rect)))
 
 ;;; Line-wise helpers
 
@@ -579,68 +553,6 @@ Replay typed text on all rectangle lines."
       (when helixel--rect-replay-marker
         (set-marker helixel--rect-replay-marker nil)
         (setq helixel--rect-replay-marker nil)))))
-
-(defun helixel--record-edit (operator &rest extra)
-  "Record edit OPERATOR with current `helixel--repeat-sel-ctx'.
-EXTRA: additional keyword-value pairs (:change-text, :replace-char, ...).
-Consumes `helixel--repeat-sel-ctx' (sets to nil).
-Also creates an edit action in the ring (for `;' jumping)."
-  (unless helixel--inhibit-repeat-record
-    (let ((edit (append `(:operator ,operator
-                          :sel-ctx ,helixel--repeat-sel-ctx)
-                        extra)))
-      (setq helixel--last-edit edit
-            helixel--repeat-sel-ctx nil)
-      (helixel-action-start 'edit operator)
-      (apply #'helixel--live-edit-set operator
-             (plist-get (plist-get edit :sel-ctx) :type)
-             (plist-get (plist-get edit :sel-ctx) :fn)
-             extra)
-      (helixel-action-commit))))
-
-(defun helixel--repeat-change-core ()
-   "Repeat change: kill selection, insert stored :change-text."
-   (let ((text (plist-get helixel--last-edit :change-text)))
-     (cond
-      ((and (use-region-p) (eq (helixel--selection-type) 'rect))
-       (helixel--rect-change)
-       (when text (insert text))
-       (helixel-insert-exit))
-      (t
-       (helixel--delete-selection)
-       (when text (insert text))))))
-
-(defun helixel-repeat-edit ()
-  "Repeat the last editing operation at point (bound to `.`)."
-  (interactive)
-  (unless helixel--last-edit
-    (user-error "No previous edit to repeat"))
-  (let* ((op (plist-get helixel--last-edit :operator))
-         (sel-ctx (plist-get helixel--last-edit :sel-ctx))
-         (helixel--inhibit-repeat-record t))
-    (when sel-ctx
-      (cond
-       ((plist-get sel-ctx :moves)
-        (let ((helixel--current-state 'visual))
-          (dolist (m (reverse (plist-get sel-ctx :moves)))
-            (dotimes (_ (cdr m))
-              (funcall (car m))))))
-       ((plist-get sel-ctx :fn)
-        (let ((fn (plist-get sel-ctx :fn)))
-          (when (functionp fn)
-            (funcall fn))))))
-    (pcase op
-      ('kill (helixel-kill-thing-at-point))
-      ('copy (helixel-kill-ring-save))
-      ('replace (helixel-replace))
-      ('replace-char (helixel-replace-char
-                      (plist-get helixel--last-edit :replace-char)))
-      ('paste-after (helixel-yank))
-      ('paste-before (helixel-yank-before))
-      ('indent-left (helixel-indent-left))
-      ('indent-right (helixel-indent-right))
-      ('change (helixel--repeat-change-core))
-      ('insert-text (insert (or (plist-get helixel--last-edit :change-text) ""))))))
 
 (defun helixel--delete-selection ()
   "Delete current region or char at point, pushing to kill-ring.

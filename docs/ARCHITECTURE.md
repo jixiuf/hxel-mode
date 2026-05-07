@@ -6,10 +6,11 @@
 |------|------|
 | `helixel.el` | Entry point: requires sub-modules, provides `helixel` feature |
 | `helixel-action.el` | Action infrastructure: nested data model, ring API, group-skipping session cycling. |
-| `helixel-common.el` | State machine, keymaps, movement, editing, modes, repeat-edit (`.`). Requires helixel-action and helixel-textobj. |
+| `helixel-repeat.el` | Dot-repeat (`.`) infrastructure: recording (`helixel--record-edit`), selection context management, replay (`helixel-repeat-edit`). Requires helixel-action. |
+| `helixel-common.el` | State machine, keymaps, movement, editing, modes. Requires helixel-action, helixel-textobj, helixel-repeat. |
 | `helixel-search.el` | Search & find-char engine + repeat context (`helixel--repeat-dir`, `helixel--repeat-data`). Requires helixel-common. |
 | `helixel-textobj.el` | Text objects (word, symbol, etc.) with forward-ops. Independent of helixel-common via hooks. |
-| `helixel-test.el` | ERT test suite (247 tests) |
+| `helixel-test.el` | ERT test suite (251 tests) |
 
 ## Action Data Model (`helixel-action.el`)
 
@@ -209,18 +210,18 @@ during cycling but remain in the ring for dedup purposes.")
 
 ---
 
-## Repeat Edit (`.`) (`helixel-common.el`)
+## Repeat Edit (`.`) (`helixel-repeat.el`)
 
 ### Overview
 
 Dot-repeat replays the last editing operation at the current cursor position.
 Supported operations: kill (`d`), change (`c`), copy (`y`), replace (`r`/`R`),
-paste (`p`/`P`), indent (`<`/`>`).
+paste (`p`/`P`), indent (`<`/`>`), insert-mode entry (`i`/`a`/`o`/...).
 
 ### Data Flow
 
 ```
-textobj/line/rect  → set helixel--repeat-sel-ctx (:fn ... :type ...)
+textobj/line/rect  → set sel-ctx (:fn F :kind K)
 movement in visual  → helixel--track-visual-move → accumulate :moves list
          │
          ▼
@@ -230,29 +231,33 @@ edit command → helixel--record-edit(operator) → helixel--last-edit (for .)
          ▼
    . (dot) → helixel-repeat-edit() → read last-edit
                                         │
-          ┌─────────────────────────────┘
-          ▼
-    sel-ctx :fn → funcall (textobj/line/rect)
-    sel-ctx :moves → replay in visual state (movement)
-          │
-          ▼
-    execute operator (delete-selection / yank / insert / ...)
+                   ┌────────────────────┘
+                   ▼
+              helixel--recreate-selection(sel-ctx)
+                   │
+                   ▼
+              execute operator via delete-selection / yank / insert / ...
 ```
 
-### Key Variables
+### Key Variables (all in `helixel-repeat.el`)
 
 ```elisp
-helixel--repeat-sel-ctx       ;; Set by textobj/line/rect/movement selection
-                              ;; textobj/line/rect: (:fn FUNCTION :type TYPE)
-                              ;; movement: (:type movement :moves ((FN . COUNT) ...))
-helixel--last-edit             ;; Latest edit plist for dot-repeat
+helixel--repeat-sel-ctx       ;; Set by selection commands, consumed by record-edit
+                              ;; (:fn FUNCTION :kind textobj|line|rect) or
+                              ;; (:kind movement :moves ((CMD . COUNT) ...))
+helixel--last-edit             ;; Latest edit plist
                               ;; (:operator SYMBOL :sel-ctx PLIST :change-text STR|nil)
 helixel--change-track-marker   ;; Tracks inserted text during change/insert operations
 helixel--inhibit-repeat-record ;; Prevents `.` and compound commands from re-recording
-helixel--track-visual-move     ;; Accumulates movement fn+count during visual mode
 ```
 
-### Shared Kill Core
+### Selection Replay
+
+`helixel--recreate-selection(sel-ctx)` is the unified dispatcher:
+- `:fn` present → `(funcall fn)` (textobj, line, rect)
+- `:kind movement` → replay `:moves` list with visual state binding
+
+### Shared Kill Core (`helixel-common.el`)
 
 ```elisp
 (helixel--delete-selection)   ;; Delete region/char, push to kill-ring.
