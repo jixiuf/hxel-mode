@@ -220,7 +220,8 @@ paste (`p`/`P`), indent (`<`/`>`).
 ### Data Flow
 
 ```
-selection command → set helixel--repeat-sel-ctx (:fn ... :type ...)
+textobj/line/rect  → set helixel--repeat-sel-ctx (:fn ... :type ...)
+movement in visual  → helixel--track-visual-move → accumulate :moves list
          │
          ▼
 edit command → helixel--record-edit(operator) → helixel--last-edit (for .)
@@ -229,23 +230,26 @@ edit command → helixel--record-edit(operator) → helixel--last-edit (for .)
          ▼
    . (dot) → helixel-repeat-edit() → read last-edit
                                         │
-                   ┌────────────────────┘
-                   ▼
-              funcall (:fn) recreate selection
-                   │
-                   ▼
-              execute operator via delete-selection / yank / insert
+          ┌─────────────────────────────┘
+          ▼
+    sel-ctx :fn → funcall (textobj/line/rect)
+    sel-ctx :moves → replay in visual state (movement)
+          │
+          ▼
+    execute operator (delete-selection / yank / insert / ...)
 ```
 
 ### Key Variables
 
 ```elisp
-helixel--repeat-sel-ctx       ;; Set by textobj/line/rect selection commands
-                              ;; (:fn FUNCTION :type textobj|line|rect)
+helixel--repeat-sel-ctx       ;; Set by textobj/line/rect/movement selection
+                              ;; textobj/line/rect: (:fn FUNCTION :type TYPE)
+                              ;; movement: (:type movement :moves ((FN . COUNT) ...))
 helixel--last-edit             ;; Latest edit plist for dot-repeat
                               ;; (:operator SYMBOL :sel-ctx PLIST :change-text STR|nil)
-helixel--change-track-marker   ;; Tracks inserted text during change operations
+helixel--change-track-marker   ;; Tracks inserted text during change/insert operations
 helixel--inhibit-repeat-record ;; Prevents `.` and compound commands from re-recording
+helixel--track-visual-move     ;; Accumulates movement fn+count during visual mode
 ```
 
 ### Shared Kill Core
@@ -278,7 +282,7 @@ The `helixel--inhibit-repeat-record` variable is bound to `t` during:
 
 | Key | Operator | Requires sel-ctx? | Extra data |
 |-----|----------|-------------------|------------|
-| `d` | `kill` | yes (for textobj/line/rect) | — |
+| `d` | `kill` | yes | — |
 | `c` | `change` | yes | `:change-text` (extracted from insert-exit) |
 | `y` | `copy` | yes | — |
 | `r` | `replace` | no | — |
@@ -287,23 +291,27 @@ The `helixel--inhibit-repeat-record` variable is bound to `t` during:
 | `P` | `paste-before` | no | — |
 | `<` | `indent-left` | yes (line) | — |
 | `>` | `indent-right` | yes (line) | — |
+| `i`/`I`/`a`/`A`/`o`/`O` | `insert-text` | no | `:change-text` (extracted from insert-exit) |
+
+Sel-ctx types:
+- `textobj` / `line` / `rect` → `:fn FUNCTION` — replay by calling the function
+- `movement` → `:moves ((FN . COUNT) ...)` — replay in visual state to extend region
 
 ### Not Recorded
 
 Commands that do NOT generate repeatable edits:
 - `undo`/`undo-redo` (`u`/`U`)
-- Insert-mode entry (`i`/`I`/`a`/`A`/`o`/`O`)
-- State transitions and movements
+- State transitions (entry to insert not via `c`/`i`/etc. is recorded)
 - Search/find-char (use `n`/`N` instead)
 - Colon commands (`:`)
 
 ### Future Extensions
 
-| Feature | Approach |
-|---------|----------|
-| Charwise movement repeat (`vw d` → `.`) | Extend `sel-ctx` with `:moves` list of `(fn . count)` pairs |
-| Count prefix repeat (`3x d` → `.`) | Add `:count` to `sel-ctx` |
-| Insert-mode typing repeat (`ihello<ESC>`) | Track insert text similarly to change tracking |
+| Feature | Approach | Status |
+|---------|----------|--------|
+| Charwise movement repeat (`vw d` → `.`) | `:moves` list in `sel-ctx` with visual-state binding | ✅ DONE |
+| Insert-mode typing repeat (`ihello<ESC>`) | `change-track-marker` pattern in all insert-entry commands | ✅ DONE |
+| Count prefix repeat (`3x d` → `.`) | `:count` in `sel-ctx`, + make commands consume `current-prefix-arg` | 🔜 |
 
 ---
 
