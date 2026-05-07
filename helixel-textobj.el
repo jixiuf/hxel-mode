@@ -1619,24 +1619,28 @@ COUNT is the number of tags to select."
 ;; Generic Block Text Objects (org blocks, markdown fences, etc.)
 ;; ============================================================================
 
+(defvar-local helixel--block-chosen-spec nil
+  "The block spec chosen by `helixel-up-block-at-point'.
+Set during `helixel-select-block-at-point' to keep the pattern
+consistent between the +1/-1 calls made by `helixel-select-block'.")
+
 (defcustom helixel-block-textobj-alist
   '((org-mode . ("^#\\+begin_\\([^ \n\r]+\\)[^\n]*"
                  "^#\\+end_\\([^ \n\r]+\\)[^\n]*" 1))
-    (markdown-mode . ("^```.*" "^```[ \t]*$" nil))
-    (gfm-mode . ("^```.*" "^```[ \t]*$" nil)))
+    (org-mode . ("^```.+$" "^```[ \t]*$" nil))
+    (markdown-mode . ("^```.+$" "^```[ \t]*$" nil))
+    (gfm-mode . ("^```.+$" "^```[ \t]*$" nil)))
   "Alist mapping major modes to block delimiter patterns for `mi c' / `ma c'.
 
 Each entry has the form (MODE . (BEGIN-RE END-RE NAME-GROUP)).
+You may have multiple entries for the same MODE; all matching
+entries are tried and the tightest enclosing block is selected.
 
 BEGIN-RE is a regexp matching the opening delimiter (e.g. `#+begin_src`).
 END-RE is a regexp matching the closing delimiter (e.g. `#+end_src`).
 NAME-GROUP is an integer specifying which capture group in both
   BEGIN-RE and END-RE holds the block name.  Use nil for
-  counter-based matching (e.g. markdown ``` fences).
-
-The first entry whose MODE satisfies `derived-mode-p' in the current
-buffer is used.  You can customize this alist to add support for
-additional major modes."
+  counter-based matching (e.g. markdown ``` fences)."
   :type '(alist :key-type symbol
                 :value-type
                 (list (regexp :tag "Begin regexp")
@@ -1646,28 +1650,65 @@ additional major modes."
   :group 'helixel)
 
 (defun helixel-up-block-at-point (&optional count)
-  "Move point past matching block delimiters for the current major mode.
+  "Move point past the nearest matching block delimiter.
 
-Looks up `helixel-block-textobj-alist' to find delimiter regexps
-for the current `major-mode'.  Users can customize that alist to
-add support for additional modes.
+Consults `helixel-block-textobj-alist' and tries every pattern
+whose MODE satisfies `derived-mode-p'.  The tightest enclosing
+delimiter wins, so nested blocks of different types (e.g. a
+markdown ``` fence inside an org #+begin_ai block) resolve to
+the innermost one.
+
+When `helixel--block-chosen-spec' is non-nil the previously chosen
+spec is reused directly (for consistency across the +1/-1 calls
+made by `helixel-select-block').
 
 Returns 0 on success, non-zero if not all levels found."
-  (let ((spec (cl-some (lambda (entry)
-                         (when (derived-mode-p (car entry))
-                           (cdr entry)))
-                       helixel-block-textobj-alist)))
-    (if spec
-        (apply #'helixel-up-regex-block (nth 0 spec) (nth 1 spec)
-               count (cddr spec))
-      (user-error "No block text object for %s" major-mode))))
+  (if helixel--block-chosen-spec
+      ;; Subsequent call: reuse the remembered spec
+      (apply #'helixel-up-regex-block
+             (nth 0 helixel--block-chosen-spec)
+             (nth 1 helixel--block-chosen-spec)
+             count (cddr helixel--block-chosen-spec))
+    ;; First call: try all matching specs, pick nearest
+    (let* ((dir (if (> (or count 1) 0) +1 -1))
+           (orig (point))
+           (specs (cl-remove-if-not
+                   (lambda (entry) (derived-mode-p (car entry)))
+                   helixel-block-textobj-alist))
+           best-spec best-dist best-match-data)
+      (if (null specs)
+          (user-error "No block text object for %s" major-mode)
+        (dolist (spec specs)
+          (goto-char orig)
+          (let* ((spec-data (cdr spec))
+                 (result (apply #'helixel-up-regex-block
+                                (nth 0 spec-data) (nth 1 spec-data)
+                                count (cddr spec-data))))
+            (when (and (zerop result) (match-beginning 0))
+              (let ((dist (abs (- (match-beginning 0) orig))))
+                (when (or (null best-dist) (< dist best-dist))
+                  (setq best-dist dist
+                        best-spec spec-data
+                        best-match-data (match-data)))))))
+        (if best-spec
+            (progn
+              (setq helixel--block-chosen-spec best-spec)
+              (set-match-data best-match-data)
+              (goto-char (if (> dir 0)
+                             (match-end 0)
+                           (match-beginning 0)))
+              0)
+          (user-error "No block text object for %s" major-mode))))))
 
 (defun helixel-select-block-at-point (beg end type count &optional inclusive)
   "Select block delimited text for the current major mode.
 
 See `helixel-up-block-at-point' for supported modes."
   (unless inclusive (setq inclusive 'exclusive-line))
-  (helixel-select-block #'helixel-up-block-at-point beg end type count inclusive))
+  (unwind-protect
+      (helixel-select-block #'helixel-up-block-at-point
+                            beg end type count inclusive)
+    (setq helixel--block-chosen-spec nil)))
 
 (defun helixel-mark-inner-block (&optional count)
   "Select inner block (org block, markdown fence, etc.).

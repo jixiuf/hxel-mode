@@ -2752,7 +2752,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (transient-mark-mode 1)
     (insert "```python\nprint('hello')\n```")
     (goto-char 14)
-    (let ((range (helixel-select-regex-block "^```.*" "^```[ \t]*$"
+    (let ((range (helixel-select-regex-block "^```.+$" "^```[ \t]*$"
                                               nil nil nil 1 nil)))
       (should range)
       (should (> (nth 0 range) 1))
@@ -2766,7 +2766,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (transient-mark-mode 1)
     (insert "```python\nprint('hello')\n```")
     (goto-char 14)
-    (let ((range (helixel-select-regex-block "^```.*" "^```[ \t]*$"
+    (let ((range (helixel-select-regex-block "^```.+$" "^```[ \t]*$"
                                               nil nil nil 1 t)))
       (should range)
       (should (= (nth 0 range) 1))
@@ -2822,6 +2822,23 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (insert "```\ncode\n```")
     (goto-char (point-min))
     (should-error (helixel-up-block-at-point 1))))
+
+(ert-deftest helixel-test-block-inner-nested-fence-in-org ()
+  "Inner block selects innermost fence inside an org block."
+  (with-temp-buffer
+    (delay-mode-hooks (org-mode))
+    (insert "#+begin_ai\nhello\n```sh\nsudo emerge\ndev-python\n```\nworld\n#+end_ai")
+    (goto-char (point-min))
+    (search-forward "sudo")
+    (let* ((helixel-textobj-visual-state-p-function nil)
+           (helixel-textobj-action-function nil))
+      (setq helixel--block-chosen-spec nil)
+      (call-interactively #'helixel-mark-inner-block)
+      (message "region: %d-%d content: '%s'" 
+               (region-beginning) (region-end)
+               (buffer-substring (region-beginning) (region-end)))
+      (should (> (region-beginning) 20))
+      (should (< (region-end) 50)))))
 
 (provide 'helixel-test)
 ;;; helixel-test.el ends here
