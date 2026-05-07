@@ -576,6 +576,42 @@ Also creates an edit action in the ring (for `;' jumping)."
              extra)
       (helixel-action-commit))))
 
+(defun helixel--repeat-change-core ()
+  "Repeat change: kill selection, insert stored :change-text."
+  (let ((text (plist-get helixel--last-edit :change-text)))
+    (cond
+     ((and (use-region-p) (eq (helixel--selection-type) 'rect))
+      (helixel--rect-change)
+      (when text (insert text))
+      (helixel-insert-exit))
+     (t
+      (helixel-kill-thing-at-point)
+      (when text (insert text))))))
+
+(defun helixel-repeat-edit ()
+  "Repeat the last editing operation at point (bound to `.`)."
+  (interactive)
+  (unless helixel--last-edit
+    (user-error "No previous edit to repeat"))
+  (let* ((op (plist-get helixel--last-edit :operator))
+         (sel-ctx (plist-get helixel--last-edit :sel-ctx))
+         (helixel--inhibit-repeat-record t))
+    (when sel-ctx
+      (let ((fn (plist-get sel-ctx :fn)))
+        (when (functionp fn)
+          (funcall fn))))
+    (pcase op
+      ('kill (helixel-kill-thing-at-point))
+      ('copy (helixel-kill-ring-save))
+      ('replace (helixel-replace))
+      ('replace-char (helixel-replace-char
+                      (plist-get helixel--last-edit :replace-char)))
+      ('paste-after (helixel-yank))
+      ('paste-before (helixel-yank-before))
+      ('indent-left (helixel-indent-left))
+      ('indent-right (helixel-indent-right))
+      ('change (helixel--repeat-change-core)))))
+
 (defun helixel-kill-thing-at-point ()
    "Kill current region or delete char at point.
 When selection is line-wise, tag the killed text with a line-wise yank-handler.
@@ -906,6 +942,7 @@ Example with multiple callbacks:
     ;; when helixel-replace-delete-char-p is nil
     (define-key keymap "p" #'helixel-yank)
     (define-key keymap "P" #'helixel-yank-before)
+    (define-key keymap "." #'helixel-repeat-edit)
 
     (define-key keymap "x" #'helixel-select-line)
     (define-key keymap "v" #'helixel-begin-selection)
