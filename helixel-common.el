@@ -89,6 +89,24 @@ Keys:
 (defvar-local helixel--rect-replay-marker nil
   "Marker at insertion point before entering insert for rect change.")
 
+(defvar-local helixel--last-edit nil
+  "Plist describing the last edit for dot-repeat (`.`).
+
+Keys:
+  :operator    symbol   ;; kill|change|copy|replace|paste-after|paste-before
+                        ;; |indent-left|indent-right|replace-char
+  :sel-ctx     plist|nil  ;; (:fn FUNCTION :type SYMBOL), nil if no selection
+  :change-text string|nil ;; text inserted during `c` change
+  :replace-char char|nil  ;; char for `R` replace-char")
+
+(defvar-local helixel--change-track-marker nil
+  "Marker at position before entering insert during a change operation.
+Used to extract :change-text in `helixel-insert-exit'.")
+
+(defvar helixel--inhibit-repeat-record nil
+  "When non-nil, `helixel--record-edit' is a no-op.
+Bound during `helixel-repeat-edit' to prevent re-recording.")
+
 (defvar helixel-global-mode nil
   "Enable Helixel mode in all buffers.")
 
@@ -146,6 +164,12 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
   "Switch to normal state."
   (interactive)
   (helixel-action-start 'state 'exit)
+  (when (and helixel--change-track-marker
+             (eq (plist-get helixel--last-edit :operator) 'change))
+    (let ((text (buffer-substring helixel--change-track-marker (point))))
+      (plist-put helixel--last-edit :change-text text))
+    (set-marker helixel--change-track-marker nil)
+    (setq helixel--change-track-marker nil))
   (when helixel--rect-replay-data
     (helixel--rect-replay))
   (let ((state (helixel--default-state-for-buffer)))
@@ -534,11 +558,30 @@ Replay typed text on all rectangle lines."
         (set-marker helixel--rect-replay-marker nil)
         (setq helixel--rect-replay-marker nil)))))
 
+(defun helixel--record-edit (operator &rest extra)
+  "Record edit OPERATOR with current `helixel--repeat-sel-ctx'.
+EXTRA: additional keyword-value pairs (:change-text, :replace-char, ...).
+Consumes `helixel--repeat-sel-ctx' (sets to nil).
+Also creates an edit action in the ring (for `;' jumping)."
+  (unless helixel--inhibit-repeat-record
+    (let ((edit (append `(:operator ,operator
+                          :sel-ctx ,helixel--repeat-sel-ctx)
+                        extra)))
+      (setq helixel--last-edit edit
+            helixel--repeat-sel-ctx nil)
+      (helixel-action-start 'edit operator)
+      (apply #'helixel--live-edit-set operator
+             (plist-get (plist-get edit :sel-ctx) :type)
+             (plist-get (plist-get edit :sel-ctx) :fn)
+             extra)
+      (helixel-action-commit))))
+
 (defun helixel-kill-thing-at-point ()
-  "Kill current region or delete char at point.
+   "Kill current region or delete char at point.
 When selection is line-wise, tag the killed text with a line-wise yank-handler.
 When selection is rect, tag with a rect-wise yank-handler."
-  (interactive)
+   (interactive)
+   (helixel--record-edit 'kill)
   (cond
    ((not (use-region-p))
     (delete-char 1))
@@ -562,9 +605,11 @@ When selection is rect, tag with a rect-wise yank-handler."
   "Remove the current region or current point and enter insert-mode.
 When selection is rect, replay inserted text on all rect lines."
   (interactive)
+  (helixel--record-edit 'change)
   (if (and (use-region-p) (eq (helixel--selection-type) 'rect))
       (helixel--rect-change)
     (helixel-kill-thing-at-point)
+    (setq helixel--change-track-marker (point-marker))
     (helixel--switch-state 'insert)))
 
 (defun helixel-visual-exit ()
@@ -642,6 +687,7 @@ When selection is rect, replay inserted text on all rect lines."
   "Replace selection with CHAR.
 If no region is active, replace character at point."
   (interactive "c")
+  (helixel--record-edit 'replace-char :replace-char char)
   (if (use-region-p)
       (helixel--replace-region
        (region-beginning) (region-end)
@@ -652,6 +698,7 @@ If no region is active, replace character at point."
   "Replace selection with the last stretch of killed text.
 Handles line-wise and rect content appropriately."
   (interactive)
+  (helixel--record-edit 'replace)
   (if (= 0 (length kill-ring))
       (message "nothing to yank")
     (let* ((text (current-kill 0 t))
@@ -693,6 +740,7 @@ Handles line-wise and rect content appropriately."
 When selection is line-wise, tag the text with a line-wise yank-handler.
 When selection is rect, tag with a rect-wise yank-handler."
   (interactive)
+  (helixel--record-edit 'copy)
   (when (use-region-p)
     (cond
      ((eq (helixel--selection-type) 'rect)
@@ -714,6 +762,7 @@ Otherwise behaves like `yank'.
 
 ARG is passed to `yank'."
   (interactive "*P")
+  (helixel--record-edit 'paste-after)
   (cond
    ((helixel--rect-wise-kill-p)
     (let ((lines (nth 1 (get-text-property
@@ -735,6 +784,7 @@ Otherwise behaves like `yank'.
 
 ARG is passed to `yank'."
   (interactive "*P")
+  (helixel--record-edit 'paste-before)
   (cond
    ((helixel--rect-wise-kill-p)
     (let ((lines (nth 1 (get-text-property
@@ -751,12 +801,14 @@ ARG is passed to `yank'."
 (defun helixel-indent-left ()
   "Indent region leftward and clear Helixel selection data."
   (interactive)
+  (helixel--record-edit 'indent-left)
   (call-interactively #'indent-rigidly-left)
   (helixel--clear-data))
 
 (defun helixel-indent-right ()
   "Indent region rightward and clear Helixel selection data."
   (interactive)
+  (helixel--record-edit 'indent-right)
   (call-interactively #'indent-rigidly-right)
   (helixel--clear-data))
 
