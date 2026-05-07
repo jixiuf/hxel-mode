@@ -577,16 +577,16 @@ Also creates an edit action in the ring (for `;' jumping)."
       (helixel-action-commit))))
 
 (defun helixel--repeat-change-core ()
-  "Repeat change: kill selection, insert stored :change-text."
-  (let ((text (plist-get helixel--last-edit :change-text)))
-    (cond
-     ((and (use-region-p) (eq (helixel--selection-type) 'rect))
-      (helixel--rect-change)
-      (when text (insert text))
-      (helixel-insert-exit))
-     (t
-      (helixel-kill-thing-at-point)
-      (when text (insert text))))))
+   "Repeat change: kill selection, insert stored :change-text."
+   (let ((text (plist-get helixel--last-edit :change-text)))
+     (cond
+      ((and (use-region-p) (eq (helixel--selection-type) 'rect))
+       (helixel--rect-change)
+       (when text (insert text))
+       (helixel-insert-exit))
+      (t
+       (helixel--delete-selection)
+       (when text (insert text))))))
 
 (defun helixel-repeat-edit ()
   "Repeat the last editing operation at point (bound to `.`)."
@@ -612,12 +612,11 @@ Also creates an edit action in the ring (for `;' jumping)."
       ('indent-right (helixel-indent-right))
       ('change (helixel--repeat-change-core)))))
 
-(defun helixel-kill-thing-at-point ()
-   "Kill current region or delete char at point.
-When selection is line-wise, tag the killed text with a line-wise yank-handler.
-When selection is rect, tag with a rect-wise yank-handler."
-   (interactive)
-   (helixel--record-edit 'kill)
+(defun helixel--delete-selection ()
+  "Delete current region or char at point, pushing to kill-ring.
+Does NOT record an edit and does NOT clear selection data.
+Used as the shared kill core by `helixel-kill-thing-at-point',
+`helixel-change-thing-at-point', and `helixel--repeat-change-core'."
   (cond
    ((not (use-region-p))
     (delete-char 1))
@@ -634,8 +633,16 @@ When selection is rect, tag with a rect-wise yank-handler."
    (t
     (when (and (eolp) (<= (region-beginning) (pos-bol)))
       (forward-visible-line 1))
-    (kill-region (region-beginning) (region-end))))
-  (helixel--clear-data))
+    (kill-region (region-beginning) (region-end)))))
+
+(defun helixel-kill-thing-at-point ()
+   "Kill current region or delete char at point.
+When selection is line-wise, tag the killed text with a line-wise yank-handler.
+When selection is rect, tag with a rect-wise yank-handler."
+   (interactive)
+   (helixel--record-edit 'kill)
+   (helixel--delete-selection)
+   (helixel--clear-data))
 
 (defun helixel-change-thing-at-point ()
   "Remove the current region or current point and enter insert-mode.
@@ -644,8 +651,7 @@ When selection is rect, replay inserted text on all rect lines."
   (helixel--record-edit 'change)
   (if (and (use-region-p) (eq (helixel--selection-type) 'rect))
       (helixel--rect-change)
-    (let ((helixel--inhibit-repeat-record t))
-      (helixel-kill-thing-at-point))
+    (helixel--delete-selection)
     (setq helixel--change-track-marker (point-marker))
     (helixel--switch-state 'insert)))
 
