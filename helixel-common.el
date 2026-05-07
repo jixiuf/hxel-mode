@@ -644,7 +644,8 @@ When selection is rect, replay inserted text on all rect lines."
   (helixel--record-edit 'change)
   (if (and (use-region-p) (eq (helixel--selection-type) 'rect))
       (helixel--rect-change)
-    (helixel-kill-thing-at-point)
+    (let ((helixel--inhibit-repeat-record t))
+      (helixel-kill-thing-at-point))
     (setq helixel--change-track-marker (point-marker))
     (helixel--switch-state 'insert)))
 
@@ -765,10 +766,11 @@ Handles line-wise and rect content appropriately."
                     bare
                   (substring-no-properties text))))
        ;; No region — replace char at point
-       (t
-        (when helixel-replace-delete-char-p
-          (delete-char 1))
-        (helixel-yank)))
+        (t
+         (when helixel-replace-delete-char-p
+           (delete-char 1))
+         (let ((helixel--inhibit-repeat-record t))
+           (helixel-yank))))
       (helixel--clear-data))))
 
 (defun helixel-kill-ring-save ()
