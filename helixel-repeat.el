@@ -120,7 +120,7 @@ Dispatches on :kind to use the appropriate replay strategy."
               (funcall (car m))))))))))
 
 ;; ---------------------------------------------------------------------------
-;; Replay (bound to `.`)
+;; Execution dispatcher — single entry point for replay
 
 (declare-function helixel-kill-thing-at-point "helixel-common")
 (declare-function helixel-kill-ring-save "helixel-common")
@@ -147,16 +147,12 @@ Dispatches on :kind to use the appropriate replay strategy."
        (helixel--delete-selection)
        (when text (insert text))))))
 
-(defun helixel-repeat-edit ()
-  "Repeat the last editing operation at point (bound to `.`)."
-  (interactive)
-  (unless helixel--last-tx
-    (user-error "No previous edit to repeat"))
-  (let* ((op (helixel-edit-op helixel--last-tx))
-         (sel (helixel-edit-sel helixel--last-tx))
-         (payload (helixel-edit-payload helixel--last-tx))
-         (helixel--inhibit-repeat-record t))
-    (helixel--recreate-selection sel)
+(defun helixel--execute-edit (tx)
+  "Execute transaction TX on the current buffer.
+Does NOT record, does NOT switch state.
+Maps :op to the appropriate execution function."
+  (let ((op (helixel-edit-op tx))
+        (payload (helixel-edit-payload tx)))
     (pcase op
       ('kill (helixel-kill-thing-at-point))
       ('copy (helixel-kill-ring-save))
@@ -168,6 +164,19 @@ Dispatches on :kind to use the appropriate replay strategy."
       ('indent-right (helixel-indent-right))
       ('change (helixel--repeat-change-core))
       ('insert-text (insert (or (plist-get payload :text) ""))))))
+
+;; ---------------------------------------------------------------------------
+;; Replay (bound to `.`)
+
+(defun helixel-repeat-edit ()
+  "Repeat the last editing operation at point (bound to `.`)."
+  (interactive)
+  (unless helixel--last-tx
+    (user-error "No previous edit to repeat"))
+  (let ((tx helixel--last-tx)
+        (helixel--inhibit-repeat-record t))
+    (helixel--recreate-selection (helixel-edit-sel tx))
+    (helixel--execute-edit tx)))
 
 (provide 'helixel-repeat)
 ;;; helixel-repeat.el ends here
