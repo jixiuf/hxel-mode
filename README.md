@@ -191,3 +191,30 @@ w           new session, new start position
 (helixel-define-key 'normal "]" #'helixel-forward-paragraph)
 ```
 
+### Custom Text Object
+
+Define a new thing-based text object (e.g. Go package names
+like `github.com/foo/bar`):
+
+```elisp
+(require 'thingatpt)
+
+;; 1. Define the character set for the thing
+(define-thing-chars gopkg "-/[:alnum:]_.@:*")
+
+;; 2. Set forward-op so forward-thing knows how to move
+(put 'gopkg 'forward-op
+     (lambda (&optional count)
+       (helixel-forward-chars "-/[:alnum:]_.@:*" count)))
+
+;; 3. Define inner / a text-object commands
+(helixel-define-mark-object "gopkg" 'gopkg "gopkg" 'gopkg t)
+
+;; 4. Bind to a key (replaces the default paragraph binding)
+(define-key helixel-textobj-inner-map "p" #'helixel-mark-inner-gopkg)
+(define-key helixel-textobj-outer-map "p" #'helixel-mark-a-gopkg)
+```
+
+`mi p` now selects the inner Go package path at point;
+`ma p` selects it plus surrounding whitespace.
+
