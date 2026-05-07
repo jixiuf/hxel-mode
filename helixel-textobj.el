@@ -1378,7 +1378,7 @@ contains the block name (1-based)."
               (progn
                 (set-match-data (list (match-beginning 0) (match-end 0)))
                 0)
-            (* dir remaining)))
+            (* dir 1)))
       ;; Different begin/end: balanced counter
       (let ((balanced-re (concat "\\(" begin-re "\\)\\|\\(" end-re "\\)"))
             match)
@@ -1401,7 +1401,7 @@ contains the block name (1-based)."
               (goto-char (if (> dir 0) (match-end 0) (match-beginning 0))))))
         (if (and match (zerop remaining))
             (progn (set-match-data (list (match-beginning 0) (match-end 0))) 0)
-          (* dir remaining))))))
+          (* dir (if match remaining 1)))))))
 
 (defun helixel-select-regex-block (begin-re end-re beg end type count
                                              &optional inclusive name-group)
@@ -1649,6 +1649,31 @@ NAME-GROUP is an integer specifying which capture group in both
                               (const :tag "Counter-based" nil))))
   :group 'helixel)
 
+(defcustom helixel-block-textobj-fallback-alist
+  nil
+  "Additional fallback block patterns used when `helixel-block-textobj-alist'
+has no matching entry for the current major mode.
+
+Each element has the form (MODE BEGIN-RE END-RE NAME-GROUP) where
+MODE is currently reserved (use nil).  BEGIN-RE and END-RE are
+regexps for the opening and closing delimiters.  NAME-GROUP nil
+means counter-based balancing.
+
+NOTE: bracket pairs (), [], {} are handled automatically via
+`helixel-up-paren' (syntax-table aware, respects strings/comments).
+You do not need to add them here.
+
+When no spec from `helixel-block-textobj-alist' matches by
+`derived-mode-p', this alist plus the built-in bracket pairs are
+tried.  The tightest enclosing delimiter wins."
+  :type '(alist :key-type (choice (const nil) symbol)
+                :value-type
+                (list (regexp :tag "Begin regexp")
+                      (regexp :tag "End regexp")
+                      (choice (integer :tag "Name capture group")
+                              (const :tag "Counter-based" nil))))
+  :group 'helixel)
+
 (defun helixel-up-block-at-point (&optional count)
   "Move point past the nearest matching block delimiter.
 
@@ -1658,6 +1683,11 @@ delimiter wins, so nested blocks of different types (e.g. a
 markdown ``` fence inside an org #+begin_ai block) resolve to
 the innermost one.
 
+When no mode-specific entry matches, bracket pairs (), [], {}
+are tried via `helixel-up-paren' (syntax-table aware, respects
+strings and comments).  Additional patterns from
+`helixel-block-textobj-fallback-alist' are also tried.
+
 When `helixel--block-chosen-spec' is non-nil the previously chosen
 spec is reused directly (for consistency across the +1/-1 calls
 made by `helixel-select-block').
@@ -1665,40 +1695,74 @@ made by `helixel-select-block').
 Returns 0 on success, non-zero if not all levels found."
   (if helixel--block-chosen-spec
       ;; Subsequent call: reuse the remembered spec
-      (apply #'helixel-up-regex-block
-             (nth 0 helixel--block-chosen-spec)
-             (nth 1 helixel--block-chosen-spec)
-             count (cddr helixel--block-chosen-spec))
+      (if (characterp (car helixel--block-chosen-spec))
+          ;; Bracket spec: (OPEN . CLOSE)
+          (helixel-up-paren (car helixel--block-chosen-spec)
+                            (cdr helixel--block-chosen-spec)
+                            count)
+        ;; Regex spec: (BEGIN-RE END-RE . NAME-GROUP)
+        (apply #'helixel-up-regex-block
+               (nth 0 helixel--block-chosen-spec)
+               (nth 1 helixel--block-chosen-spec)
+               count (cddr helixel--block-chosen-spec)))
     ;; First call: try all matching specs, pick nearest
     (let* ((dir (if (> (or count 1) 0) +1 -1))
            (orig (point))
-           (specs (cl-remove-if-not
-                   (lambda (entry) (derived-mode-p (car entry)))
-                   helixel-block-textobj-alist))
+           (mode-specs (cl-remove-if-not
+                        (lambda (entry) (derived-mode-p (car entry)))
+                        helixel-block-textobj-alist))
+           (fallback-needed (null mode-specs))
+           ;; When no mode-specific spec matches, collect fallback regex specs
+           (regex-specs (if fallback-needed
+                            (cl-remove-if-not
+                             (lambda (entry)
+                               (or (null (car entry))
+                                   (derived-mode-p (car entry))))
+                             helixel-block-textobj-fallback-alist)
+                          mode-specs))
+           ;; Built-in bracket pairs (syntax-aware, only in fallback mode)
+           (bracket-pairs (when fallback-needed
+                            '((?\( . ?\)) (?\[ . ?\]) (?\{ . ?\}))))
            best-spec best-dist best-match-data)
-      (if (null specs)
-          (user-error "No block text object for %s" major-mode)
-        (dolist (spec specs)
-          (goto-char orig)
-          (let* ((spec-data (cdr spec))
-                 (result (apply #'helixel-up-regex-block
-                                (nth 0 spec-data) (nth 1 spec-data)
-                                count (cddr spec-data))))
-            (when (and (zerop result) (match-beginning 0))
-              (let ((dist (abs (- (match-beginning 0) orig))))
-                (when (or (null best-dist) (< dist best-dist))
-                  (setq best-dist dist
-                        best-spec spec-data
-                        best-match-data (match-data)))))))
-        (if best-spec
-            (progn
-              (setq helixel--block-chosen-spec best-spec)
-              (set-match-data best-match-data)
-              (goto-char (if (> dir 0)
-                             (match-end 0)
-                           (match-beginning 0)))
-              0)
-          (user-error "No block text object for %s" major-mode))))))
+      (when (and (null regex-specs) (null bracket-pairs))
+        (user-error "No block text object for %s" major-mode))
+      ;; Try regex-based specs
+      (dolist (spec regex-specs)
+        (goto-char orig)
+        (let* ((spec-data (cdr spec))
+               (result (apply #'helixel-up-regex-block
+                              (nth 0 spec-data) (nth 1 spec-data)
+                              count (cddr spec-data))))
+          (when (and (zerop result) (match-beginning 0))
+            (let ((dist (abs (- (match-beginning 0) orig))))
+              (when (or (null best-dist) (< dist best-dist))
+                (setq best-dist dist
+                      best-spec (cons 'regex spec-data)
+                      best-match-data (match-data)))))))
+      ;; Try bracket pairs via syntax-aware helixel-up-paren
+      (dolist (paren bracket-pairs)
+        (goto-char orig)
+        (let ((result (condition-case nil
+                          (helixel-up-paren (car paren) (cdr paren) count)
+                        (error nil))))
+          (when (and result (zerop result) (match-beginning 0))
+            (let ((dist (abs (- (match-beginning 0) orig))))
+              (when (or (null best-dist) (< dist best-dist))
+                (setq best-dist dist
+                      best-spec (cons 'paren paren)
+                      best-match-data (match-data)))))))
+      (if best-spec
+          (progn
+            (setq helixel--block-chosen-spec
+                  (if (eq (car best-spec) 'paren)
+                      (cdr best-spec)
+                    (cdr best-spec)))
+            (set-match-data best-match-data)
+            (goto-char (if (> dir 0)
+                           (match-end 0)
+                         (match-beginning 0)))
+            0)
+        (user-error "No block text object for %s" major-mode)))))
 
 (defun helixel-select-block-at-point (beg end type count &optional inclusive)
   "Select block delimited text for the current major mode.

@@ -2840,5 +2840,20 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
       (should (> (region-beginning) 20))
       (should (< (region-end) 50)))))
 
+(ert-deftest helixel-test-block-fallback-brackets ()
+  "Fallback selects bracket pairs in fundamental-mode."
+  (with-temp-buffer
+    (delay-mode-hooks (fundamental-mode))
+    (insert "before (inner) after")
+    (goto-char (point-min))
+    (search-forward "nne")
+    (let* ((helixel-textobj-visual-state-p-function nil)
+           (helixel-textobj-action-function nil))
+      (setq helixel--block-chosen-spec nil)
+      (call-interactively #'helixel-mark-inner-block)
+      ;; inner = content between parens, excluding parens
+      (should (= (region-beginning) 9))   ; after (
+      (should (= (region-end) 14)))))     ; at )
+
 (provide 'helixel-test)
 ;;; helixel-test.el ends here
