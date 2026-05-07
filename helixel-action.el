@@ -46,6 +46,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'helixel-edit)
 
 ;; ── Custom group ──
 
@@ -168,13 +169,11 @@ The sub-plist is keyed by the keyword form of :category'."
                             (intern (format ":%s" cat)))
                  key))))
 
-(defun helixel--live-edit-set (operator sel-ctx &rest extra)
-  "Set :edit sub-plist on the live action.
-OPERATOR: symbol (kill, change, copy, replace, etc.)
-SEL-CTX: selection context plist (:fn ... :kind ...) or nil
-EXTRA: additional keyword-value pairs (:change-text, :replace-char, ...)"
-  (plist-put helixel--action :edit
-            `(:operator ,operator :sel-ctx ,sel-ctx ,@extra)))
+(defun helixel--live-edit-set (tx)
+  "Set :edit sub-plist on the live action to transaction TX.
+TX is a plist (:op OP :sel SEL :payload PAYLOAD :marker MARKER)
+as produced by `helixel-edit-make'."
+  (plist-put helixel--action :edit tx))
 
 ;; ── Content comparison ──
 
@@ -187,7 +186,7 @@ Compares universal keys and category sub-plists."
        (equal (plist-get a1 :search) (plist-get a2 :search))
        (equal (plist-get a1 :find-char) (plist-get a2 :find-char))
        (equal (plist-get a1 :movement) (plist-get a2 :movement))
-       (equal (plist-get a1 :edit) (plist-get a2 :edit))
+       (helixel-edit-equal-p (plist-get a1 :edit) (plist-get a2 :edit))
        (let ((m1 (plist-get a1 :marker))
              (m2 (plist-get a2 :marker)))
          (if (and (markerp m1) (markerp m2))
@@ -279,20 +278,8 @@ and \"cat.subcat\" for other actions."
                     (if (eq dir 'forward) ?f ?F)
                   (if (eq dir 'forward) ?t ?T))
                 char)))
-     ((eq cat 'edit)
-       (let* ((sub (plist-get action :edit))
-              (op (plist-get sub :operator))
-              (op-str (cl-case op
-                        (kill "d") (change "c") (copy "y")
-                        (replace "r") (paste-after "p") (paste-before "P")
-                        (indent-left "<") (indent-right ">")
-                        (replace-char "R")
-                        (t (symbol-name op))))
-              (sel-ctx (plist-get sub :sel-ctx))
-              (sel-kind (plist-get sel-ctx :kind)))
-         (if sel-kind
-             (format "%s.%s" op-str sel-kind)
-           op-str)))
+      ((eq cat 'edit)
+       (helixel-edit-display (plist-get action :edit)))
      ((and (eq cat 'state) (eq (plist-get action :subcat) 'cancel))
       "C-g")
      (t (format "%s.%s" cat (plist-get action :subcat))))))

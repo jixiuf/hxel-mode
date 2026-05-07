@@ -100,11 +100,13 @@ PAYLOAD-KV are keyword-value pairs for operator-specific data."
 (defun helixel-edit-equal-p (tx1 tx2)
   "Return non-nil if TX1 and TX2 represent the same editing operation.
 Compares :op, :sel, and :payload.  Ignores :marker (position differs
-on replay) and ignores plist key order in :payload."
-  (and tx1 tx2
-       (eq (helixel-edit-op tx1) (helixel-edit-op tx2))
-       (equal (helixel-edit-sel tx1) (helixel-edit-sel tx2))
-       (equal (helixel-edit-payload tx1) (helixel-edit-payload tx2))))
+on replay) and ignores plist key order in :payload.
+Returns t when both are nil (non-edit actions are equal for dedup)."
+  (if (or (null tx1) (null tx2))
+      (eq tx1 tx2)
+    (and (eq (helixel-edit-op tx1) (helixel-edit-op tx2))
+         (equal (helixel-edit-sel tx1) (helixel-edit-sel tx2))
+         (equal (helixel-edit-payload tx1) (helixel-edit-payload tx2)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Display — for action ring history and completion

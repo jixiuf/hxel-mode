@@ -99,8 +99,7 @@ Also pushes an edit action to the ring for `;' jumping."
       (setq helixel--repeat-sel-ctx nil
             helixel--last-tx tx)
       (helixel-action-start 'edit operator)
-      (apply #'helixel--live-edit-set operator
-             (helixel-edit-sel tx) extra)
+      (helixel--live-edit-set tx)
       (helixel-action-commit))))
 
 ;; ---------------------------------------------------------------------------
