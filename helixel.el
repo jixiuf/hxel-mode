@@ -35,6 +35,7 @@
 (require 'helixel-common)
 (require 'helixel-search)
 (require 'helixel-textobj)
+(require 'helixel-repeat)
 
 (provide 'helixel)
 ;;; helixel.el ends here
