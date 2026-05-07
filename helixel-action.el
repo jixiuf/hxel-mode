@@ -59,7 +59,7 @@
   :group 'helixel)
 
 (defcustom helixel-action-cycle-categories
-  '(movement textobj search find-char)
+  '(movement textobj search find-char edit)
   "Action :category symbols that `;' (`helixel-action-cycle') navigates.
 Categories not listed here are invisible during cycling (e.g. `state'
 for cancel sentinels).  They remain in the ring for dedup purposes."
@@ -67,7 +67,8 @@ for cancel sentinels).  They remain in the ring for dedup purposes."
                   (const :tag "Movement" movement)
                   (const :tag "Text object" textobj)
                   (const :tag "Search" search)
-                  (const :tag "Find char" find-char)))
+                  (const :tag "Find char" find-char)
+                  (const :tag "Edit" edit)))
   :group 'helixel)
 
 ;; ── Buffer-local state ──
@@ -167,6 +168,16 @@ The sub-plist is keyed by the keyword form of :category'."
                             (intern (format ":%s" cat)))
                  key))))
 
+(defun helixel--live-edit-set (operator sel-type sel-fn &rest extra)
+  "Set :edit sub-plist on the live action.
+OPERATOR: symbol (kill, change, copy, replace, etc.)
+SEL-TYPE: textobj | line | rect | nil
+SEL-FN: function symbol or nil
+EXTRA: additional keyword-value pairs (:change-text, :replace-char, ...)"
+  (plist-put helixel--action :edit
+            `(:operator ,operator :sel-type ,sel-type
+                        :sel-fn ,sel-fn ,@extra)))
+
 ;; ── Content comparison ──
 
 (defun helixel-action--same-content-p (a1 a2)
@@ -177,7 +188,13 @@ Compares universal keys and category sub-plists."
        (equal (plist-get a1 :subcat) (plist-get a2 :subcat))
        (equal (plist-get a1 :search) (plist-get a2 :search))
        (equal (plist-get a1 :find-char) (plist-get a2 :find-char))
-       (equal (plist-get a1 :movement) (plist-get a2 :movement))))
+       (equal (plist-get a1 :movement) (plist-get a2 :movement))
+       (equal (plist-get a1 :edit) (plist-get a2 :edit))
+       (let ((m1 (plist-get a1 :marker))
+             (m2 (plist-get a2 :marker)))
+         (if (and (markerp m1) (markerp m2))
+             (= (marker-position m1) (marker-position m2))
+           t))))
 
 ;; ── Ring push (UNIFIED) ──
 ;;
@@ -264,6 +281,19 @@ and \"cat.subcat\" for other actions."
                     (if (eq dir 'forward) ?f ?F)
                   (if (eq dir 'forward) ?t ?T))
                 char)))
+     ((eq cat 'edit)
+      (let* ((sub (plist-get action :edit))
+             (op (plist-get sub :operator))
+             (op-str (cl-case op
+                       (kill "d") (change "c") (copy "y")
+                       (replace "r") (paste-after "p") (paste-before "P")
+                       (indent-left "<") (indent-right ">")
+                       (replace-char "R")
+                       (t (symbol-name op))))
+             (sel-type (plist-get sub :sel-type)))
+        (if sel-type
+            (format "%s.%s" op-str sel-type)
+          op-str)))
      ((and (eq cat 'state) (eq (plist-get action :subcat) 'cancel))
       "C-g")
      (t (format "%s.%s" cat (plist-get action :subcat))))))
@@ -271,33 +301,23 @@ and \"cat.subcat\" for other actions."
 ;; ── Start / continue an action ──
 
 (defun helixel-action-start (category subcat)
-  "Start or continue an action of CATEGORY and SUBCAT.
-
-Pushes the current `helixel--action' to ring if the type
-\(category subcat) changed.  Returns the new action plist.
-
-When continuing the same type, preserves the original :marker.
-Otherwise creates a fresh marker at point.
-Callers that need a specific marker (e.g. `find-repeat',
-`from-history') should call `helixel--live-put :marker' afterward.
+  "Start a new action of CATEGORY and SUBCAT.
+Always pushes the previous valid `helixel--action' to ring.
+Always creates a fresh marker at point.
+Callers that need a specific marker should call
+`helixel--live-put :marker' afterward.
 
 RING SAFETY: Old actions are deep-copied before pushing.
 The new live action is a fresh plist, never aliased to any
 ring entry."
-  (let* ((prev-type (when helixel--action
-                       (cons (plist-get helixel--action :category)
-                             (plist-get helixel--action :subcat))))
-         (this-type (cons category subcat))
-         (continuing (equal prev-type this-type))
-         (marker (or (and continuing (plist-get helixel--action :marker))
-                     (point-marker)))
+  (let* ((marker (point-marker))
          (action `(:category ,category :subcat ,subcat :marker ,marker)))
     ;; Any non-textobj action clears textobj selection state
     (when (and (eq helixel--selection-type 'textobj)
                (not (eq category 'textobj)))
       (setq helixel--selection-type nil))
-    ;; Push old action to ring when type changes, unless meaningless.
-    (when (and helixel--action (not (equal prev-type this-type))
+    ;; Always push old action to ring if valid
+    (when (and helixel--action
                (helixel--action-valid-p helixel--action))
       (helixel-action--ring-push helixel--action))
     ;; Replace live action
@@ -354,11 +374,39 @@ Returns the index or nil."
              return i)))
 
 (defun helixel-action--cycle-show (pos ring)
-  "Show the action at RING index POS as current cycling target."
-  (let ((action (nth pos ring)))
-    (setq helixel--action-pos pos)
+  "Show the group-start action for the group containing RING[POS].
+Consecutive entries with the same (:category :subcat) form a group.
+Show the oldest (largest index) entry of the group."
+  (let* ((gpos (helixel-action--cycle-group-start pos ring))
+         (action (nth gpos ring)))
+    (setq helixel--action-pos gpos)
     (helixel--jump-to-marker (plist-get action :marker))
-    (message "%s" (helixel-action--cycle-display action pos ring))))
+    (message "%s" (helixel-action--cycle-display action gpos ring))))
+
+(defun helixel-action--same-group-p (a b)
+  "Return non-nil if A and B belong to the same display group.
+Same group = same :category and same :subcat."
+  (and a b
+       (eq (helixel--action-get a :category) (helixel--action-get b :category))
+       (eq (helixel--action-get a :subcat) (helixel--action-get b :subcat))))
+
+(defun helixel-action--cycle-group-start (pos ring)
+  "Return the oldest (largest) index of the consecutive group containing POS.
+Entries at POS, POS+1, ... with same group as RING[POS] form the group."
+  (let ((len (length ring)))
+    (while (and (< (1+ pos) len)
+                (helixel-action--same-group-p (nth pos ring) (nth (1+ pos) ring)))
+      (cl-incf pos))
+    pos))
+
+(defun helixel-action--cycle-group-newest (pos ring)
+  "Return the newest (smallest) index of the consecutive group containing POS.
+Entries at ..., pos-1, pos with same group as RING[POS] form the group."
+  (let ((i pos))
+    (while (and (> i 0)
+                (helixel-action--same-group-p (nth i ring) (nth (1- i) ring)))
+      (cl-decf i))
+    i))
 
 (defun helixel-action--cycle-commit ()
   "Commit live action to ring if valid, discard otherwise.
@@ -382,23 +430,28 @@ Without prefix ARG: go to older action.
 With prefix ARG (`C-u'): go to newer action or restore live session.
 Bound to `;' in normal mode."
   (interactive "P")
-  (if arg
-      ;; C-u ; → go forward (newer)
-      (cond
-       ((and helixel--action-pos (> helixel--action-pos 0))
-        (let ((pos (helixel-action--cycle-find
-                    helixel--action-pos -1 helixel--action-ring)))
-          (if pos
-              (helixel-action--cycle-show pos helixel--action-ring)
-            (message "At newest"))))
-       ((eq helixel--action-pos 0)
-        (if helixel--action
-            (progn
-              (setq helixel--action-pos nil)
-              (helixel--jump-to-marker (plist-get helixel--action :marker))
-              (message "[live] %s" (helixel-action-display helixel--action)))
-          (message "At newest")))
-       (t (message "At newest")))
+   (if arg
+       ;; C-u ; → go forward (newer)
+       (cond
+        ((and helixel--action-pos (> helixel--action-pos 0))
+         (let* ((newest (helixel-action--cycle-group-newest
+                         helixel--action-pos helixel--action-ring))
+                (prev (when (> newest 0)
+                        (cl-loop for i from (1- newest) downto 0
+                                 when (helixel-action--cycle-visible-p
+                                       (nth i helixel--action-ring))
+                                 return i))))
+           (if prev
+               (helixel-action--cycle-show prev helixel--action-ring)
+             (message "At newest"))))
+        ((eq helixel--action-pos 0)
+         (if helixel--action
+             (progn
+               (setq helixel--action-pos nil)
+               (helixel--jump-to-marker (plist-get helixel--action :marker))
+               (message "[live] %s" (helixel-action-display helixel--action)))
+           (message "At newest")))
+        (t (message "At newest")))
     ;; ; → go back (older)
     (cond
      (helixel--action-pos

@@ -74,6 +74,15 @@ at point (t) or simply insert without deleting (nil)."
   "Current selection type.
 nil means charwise, `line' means linewise, `rect' means rectangle.")
 
+(defvar-local helixel--repeat-sel-ctx nil
+  "Plist describing how to recreate the current selection for dot-repeat.
+Set by textobj / linewise / rect selection commands.
+Read and consumed by editing commands.
+
+Keys:
+  :fn    function  ;; no-arg function that creates the selection at point
+  :type  symbol    ;; textobj | line | rect")
+
 (defvar-local helixel--rect-replay-data nil
   "Plist for rect change replay: (:col N :line-count N).")
 
@@ -366,7 +375,8 @@ If a region is already active, no new region is created."
     (beginning-of-line)
     (push-mark-command t t)
     (end-of-line))
-  (setq helixel--selection-type 'line))
+  (setq helixel--selection-type 'line)
+  (setq helixel--repeat-sel-ctx (list :fn this-command :type 'line)))
 
 (defun helixel-select-line-up ()
   "Select the current line, extending upward on every subsequent call."
@@ -380,7 +390,8 @@ If a region is already active, no new region is created."
     (end-of-line)
     (push-mark-command t t)
     (beginning-of-line))
-  (setq helixel--selection-type 'line))
+  (setq helixel--selection-type 'line)
+  (setq helixel--repeat-sel-ctx (list :fn this-command :type 'line)))
 
 (defun helixel-select-rectangle ()
   "Start or extend rectangle selection.
@@ -399,7 +410,8 @@ down one line.  Otherwise, start a rectangle selection at point."
     (helixel--switch-state 'visual)
     (push-mark (point) t t)
     (rectangle-mark-mode 1))
-  (setq helixel--selection-type 'rect))
+  (setq helixel--selection-type 'rect)
+  (setq helixel--repeat-sel-ctx (list :fn this-command :type 'rect)))
 
 ;;; Line-wise helpers
 

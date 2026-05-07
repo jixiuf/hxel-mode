@@ -2328,8 +2328,9 @@ Second paragraph.")
     (helixel-forward-char)
     (helixel-action-cycle)
     (should (null helixel--action))
-    (should (= (length helixel--action-ring) 1))
-    (should (eq helixel--action-pos 0))))
+    (should (= (length helixel--action-ring) 2))
+    (should (= helixel--action-pos 1))
+    (should (= (region-beginning) 1))))
 
 (ert-deftest helixel-test-action-cycle-ring ()
   "Test ; cycles through action ring."
@@ -2659,12 +2660,12 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
       (setq last-command 'helixel-forward-word-start
             this-command 'helixel-forward-word-start)
       (helixel-forward-word-start)
-      (should (= (marker-position (helixel--live-get :marker)) mark1))
-      ;; C-g: cancel session → pushes old action + cancel sentinel
+      (should-not (= (marker-position (helixel--live-get :marker)) mark1))
+      ;; C-g: cancel session → pushes live action + cancel sentinel
       (helixel--cancel-action)
       (should (null helixel--action))
-      ;; ring: [state/cancel, movement/word(old)]
-      (should (= (length helixel--action-ring) 2))
+      ;; ring: [state/cancel, movement/word(2nd w), movement/word(1st w)]
+      (should (= (length helixel--action-ring) 3))
       (should (eq (plist-get (car helixel--action-ring) :category) 'state))
       ;; w: new session, new marker at current position
       (setq last-command nil this-command 'helixel-forward-word-start)
@@ -2672,11 +2673,11 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
       (helixel-forward-word-start)
       (should helixel--action)
       (should (= (marker-position (helixel--live-get :marker)) 7))
-      ;; ;: push new w to ring (dedup passes: front is state/cancel ≠ movement/word)
-      ;; ring: [movement/word(new), state/cancel, movement/word(old)]
+      ;; ;: push new w to ring
+      ;; ring: [movement/word(new), state/cancel, movement/word(2nd), movement/word(1st)]
       (helixel-action-cycle)
-      (should (= (length helixel--action-ring) 3))
-      ;; First visible entry is movement/word(new) at pos 0
+      (should (= (length helixel--action-ring) 4))
+      ;; First visible entry is movement/word(new)
       (should (eq (plist-get (nth helixel--action-pos helixel--action-ring)
                              :category) 'movement))
       ;; ; again: skip cancel, jump to older session (original w-w)
