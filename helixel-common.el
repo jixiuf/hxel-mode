@@ -152,6 +152,21 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
     (rectangle-mark-mode -1))
   (deactivate-mark))
 
+(defun helixel--track-visual-move (cmd)
+  "Append movement CMD to `helixel--repeat-sel-ctx' for visual-mode moves.
+Accumulates consecutive same-command moves by incrementing count."
+  (when (eq helixel--current-state 'visual)
+    (let ((ctx helixel--repeat-sel-ctx)
+          (entry (cons cmd 1)))
+      (if (and ctx (eq (plist-get ctx :type) 'movement))
+          (let* ((moves (plist-get ctx :moves))
+                 (last (car moves)))
+            (if (and last (eq (car last) cmd))
+                (setcdr last (1+ (cdr last)))
+              (plist-put ctx :moves (cons entry moves))))
+        (setq helixel--repeat-sel-ctx
+              `(:type movement :moves (,entry)))))))
+
 (defun helixel-insert ()
   "Switch to insert state at the beginning of the selection."
   (interactive)
@@ -225,7 +240,8 @@ Without highlights clearing:
          ,(when dir `(helixel--live-cat-set-dir ',dir))
          ,@(when clear-highlights
              '((helixel--clear-highlights)))
-         (call-interactively #',builtin)))))
+         (call-interactively #',builtin)
+         (helixel--track-visual-move #',name)))))
 
 (defmacro helixel-define-movements (&rest specs)
   "Register multiple movements from SPECS.
@@ -275,7 +291,8 @@ If a region is already active, no new region is created."
      (let ((current (point)))
        ,@body
        (unless (use-region-p)
-         (push-mark current t 'activate)))))
+         (push-mark current t 'activate))
+       (helixel--track-visual-move this-command))))
 
 (defun helixel-forward-word-start ()
   "Move to start of the next word."
@@ -381,13 +398,15 @@ If a region is already active, no new region is created."
   (helixel--clear-highlights)
   (if current-prefix-arg
       (goto-line (prefix-numeric-value current-prefix-arg))
-    (call-interactively #'beginning-of-buffer)))
+    (call-interactively #'beginning-of-buffer))
+  (helixel--track-visual-move this-command))
 
 (defun helixel-goto-line (&optional arg)
   "Go to line ARG, recording session."
   (interactive "P")
   (helixel-action-start 'movement 'goto)
-  (goto-line (if arg (prefix-numeric-value arg) (goto-line-read-args))))
+  (goto-line (if arg (prefix-numeric-value arg) (goto-line-read-args)))
+  (helixel--track-visual-move this-command))
 
 
 (defun helixel-select-line ()
@@ -600,9 +619,16 @@ Also creates an edit action in the ring (for `;' jumping)."
          (sel-ctx (plist-get helixel--last-edit :sel-ctx))
          (helixel--inhibit-repeat-record t))
     (when sel-ctx
-      (let ((fn (plist-get sel-ctx :fn)))
-        (when (functionp fn)
-          (funcall fn))))
+      (cond
+       ((plist-get sel-ctx :moves)
+        (let ((helixel--current-state 'visual))
+          (dolist (m (reverse (plist-get sel-ctx :moves)))
+            (dotimes (_ (cdr m))
+              (funcall (car m))))))
+       ((plist-get sel-ctx :fn)
+        (let ((fn (plist-get sel-ctx :fn)))
+          (when (functionp fn)
+            (funcall fn))))))
     (pcase op
       ('kill (helixel-kill-thing-at-point))
       ('copy (helixel-kill-ring-save))

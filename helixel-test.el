@@ -2996,5 +2996,28 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (helixel-repeat-edit)
     (should (string= (buffer-string) "hello world"))))
 
+(ert-deftest helixel-test-repeat-edit-movement-kill ()
+  "Test repeat kill with movement selection (v w d style)."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 1)
+    (setq helixel--last-edit
+          `(:operator kill
+                      :sel-ctx (:type movement
+                                :moves ((helixel-forward-word-start . 2)))))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "foo"))))
+
+(ert-deftest helixel-test-repeat-edit-movement-change ()
+  "Test repeat change with movement selection (v w c style)."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 1)
+    (setq helixel--last-edit
+          `(:operator change
+                      :sel-ctx (:type movement
+                                :moves ((helixel-forward-word-start . 1)))
+                      :change-text "X"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "Xworld foo"))))
+
 (provide 'helixel-test)
 ;;; helixel-test.el ends here
