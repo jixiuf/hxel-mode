@@ -156,10 +156,14 @@ Accumulates consecutive same-command moves by incrementing count."
   (interactive)
   (helixel-action-start 'state 'exit)
   (when (and helixel--change-track-marker
-             (member (plist-get helixel--last-edit :operator)
+             (member (helixel-edit-op helixel--last-tx)
                      '(change insert-text)))
-    (let ((text (buffer-substring helixel--change-track-marker (point))))
-      (plist-put helixel--last-edit :change-text text))
+    (let ((text (buffer-substring helixel--change-track-marker (point)))
+          (payload (helixel-edit-payload helixel--last-tx)))
+      (plist-put payload
+                 (if (eq (helixel-edit-op helixel--last-tx) 'change)
+                     :inserted-text :text)
+                 text))
     (set-marker helixel--change-track-marker nil)
     (setq helixel--change-track-marker nil))
   (when helixel--rect-replay-data
@@ -682,7 +686,7 @@ When selection is rect, replay inserted text on all rect lines."
   "Replace selection with CHAR.
 If no region is active, replace character at point."
   (interactive "c")
-  (helixel--record-edit 'replace-char :replace-char char)
+  (helixel--record-edit 'replace-char :char char)
   (if (use-region-p)
       (helixel--replace-region
        (region-beginning) (region-end)

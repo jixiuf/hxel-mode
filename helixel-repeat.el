@@ -37,6 +37,7 @@
 ;;; Code:
 
 (require 'helixel-action)
+(require 'helixel-edit)
 
 ;; ---------------------------------------------------------------------------
 ;; Selection Context (helixel--repeat-sel-ctx)
@@ -63,18 +64,15 @@ Keys:
   :moves ((CMD . COUNT) ...)  ;; For movement: accumulated command sequence")
 
 ;; ---------------------------------------------------------------------------
-;; Last Edit Transaction
+;; Last Edit Transaction (stored as helixel--last-tx)
 
-(defvar-local helixel--last-edit nil
-  "Plist describing the last edit for dot-repeat (`.`).
-Updated on every edit, held in a single buffer-local slot.
+(defvar-local helixel--last-tx nil
+  "The most recent edit transaction (:op :sel :payload :marker).
+Built by `helixel-edit-make', stored by `helixel--record-edit-tx'.
+Replace `helixel--last-edit' — unified schema shared by repeat,
+action ring, and edit commands.
 
-Keys:
-  :operator     symbol    ;; kill|change|copy|replace|paste-after|paste-before
-                          ;; |indent-left|indent-right|replace-char|insert-text
-  :sel-ctx      plist|nil ;; Selection context, or nil
-  :change-text  string|nil ;; Text inserted during change/insert
-  :replace-char char|nil  ;; Char for replace-char")
+See `helixel-edit.el' for the full transaction schema.")
 
 (defvar-local helixel--change-track-marker nil
   "Marker at position before entering insert during a change/insert operation.
@@ -91,20 +89,18 @@ Also bound in compound commands (e.g. `helixel-replace' calling
 ;; Recording (called by editing commands in helixel-common)
 
 (defun helixel--record-edit (operator &rest extra)
-  "Record edit OPERATOR with current `helixel--repeat-sel-ctx'.
-EXTRA: additional keyword-value pairs (:change-text, :replace-char, ...).
-Consumes `helixel--repeat-sel-ctx' (sets to nil).
-Also creates an edit action in the ring (for `;' jumping)."
+  "Record edit OPERATOR with current selection context and EXTRA payload.
+Consumes `helixel--repeat-sel-ctx'.  Builds a transaction via
+`helixel-edit-make' and stores it as `helixel--last-tx'.
+Also pushes an edit action to the ring for `;' jumping."
   (unless helixel--inhibit-repeat-record
-    (let ((edit (append `(:operator ,operator
-                          :sel-ctx ,helixel--repeat-sel-ctx)
-                        extra)))
-      (setq helixel--last-edit edit
-            helixel--repeat-sel-ctx nil)
+    (let ((tx (apply #'helixel-edit-make operator
+                     helixel--repeat-sel-ctx extra)))
+      (setq helixel--repeat-sel-ctx nil
+            helixel--last-tx tx)
       (helixel-action-start 'edit operator)
       (apply #'helixel--live-edit-set operator
-             (plist-get edit :sel-ctx)
-             extra)
+             (helixel-edit-sel tx) extra)
       (helixel-action-commit))))
 
 ;; ---------------------------------------------------------------------------
@@ -140,38 +136,39 @@ Dispatches on :kind to use the appropriate replay strategy."
 (declare-function helixel--delete-selection "helixel-common")
 
 (defun helixel--repeat-change-core ()
-  "Repeat change: kill selection, insert stored :change-text."
-  (let ((text (plist-get helixel--last-edit :change-text)))
+  "Repeat change: kill selection, insert stored :inserted-text from payload."
+  (let ((text (plist-get (helixel-edit-payload helixel--last-tx)
+                         :inserted-text)))
     (cond
      ((and (use-region-p) (eq (helixel--selection-type) 'rect))
-      (helixel--rect-change)
-      (when text (insert text))
-      (helixel-insert-exit))
-     (t
-      (helixel--delete-selection)
-      (when text (insert text))))))
+       (helixel--rect-change)
+       (when text (insert text))
+       (helixel-insert-exit))
+      (t
+       (helixel--delete-selection)
+       (when text (insert text))))))
 
 (defun helixel-repeat-edit ()
   "Repeat the last editing operation at point (bound to `.`)."
   (interactive)
-  (unless helixel--last-edit
+  (unless helixel--last-tx
     (user-error "No previous edit to repeat"))
-  (let* ((op (plist-get helixel--last-edit :operator))
-         (sel-ctx (plist-get helixel--last-edit :sel-ctx))
+  (let* ((op (helixel-edit-op helixel--last-tx))
+         (sel (helixel-edit-sel helixel--last-tx))
+         (payload (helixel-edit-payload helixel--last-tx))
          (helixel--inhibit-repeat-record t))
-    (helixel--recreate-selection sel-ctx)
+    (helixel--recreate-selection sel)
     (pcase op
       ('kill (helixel-kill-thing-at-point))
       ('copy (helixel-kill-ring-save))
       ('replace (helixel-replace))
-      ('replace-char (helixel-replace-char
-                      (plist-get helixel--last-edit :replace-char)))
+      ('replace-char (helixel-replace-char (plist-get payload :char)))
       ('paste-after (helixel-yank))
       ('paste-before (helixel-yank-before))
       ('indent-left (helixel-indent-left))
       ('indent-right (helixel-indent-right))
       ('change (helixel--repeat-change-core))
-      ('insert-text (insert (or (plist-get helixel--last-edit :change-text) ""))))))
+      ('insert-text (insert (or (plist-get payload :text) ""))))))
 
 (provide 'helixel-repeat)
 ;;; helixel-repeat.el ends here

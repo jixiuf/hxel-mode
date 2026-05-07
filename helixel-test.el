@@ -2861,7 +2861,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
 (ert-deftest helixel-test-repeat-edit-no-prev ()
   "Test repeat-edit with no previous edit signals error."
   (helixel-test-with-buffer "hello world"
-    (setq helixel--last-edit nil)
+    (setq helixel--last-tx nil)
     (should-error (helixel-repeat-edit))))
 
 (ert-deftest helixel-test-repeat-edit-paste ()
@@ -2930,10 +2930,10 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   "Test repeat change with textobj (ciw style)."
   (helixel-test-with-buffer "hello world foo"
     (goto-char 3)
-    (setq helixel--last-edit
-          `(:operator change
-                      :sel-ctx (:fn helixel-mark-inner-word :kind textobj)
-                      :change-text "CHANGED"))
+    (setq helixel--last-tx
+          `(:op change
+                      :sel (:fn helixel-mark-inner-word :kind textobj)
+                      :payload (:inserted-text "CHANGED")))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "CHANGED world foo"))
     (goto-char 1)
@@ -2941,15 +2941,15 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (should (string= (buffer-string) "CHANGED world foo"))))
 
 (ert-deftest helixel-test-repeat-edit-preserves-last-edit ()
-  "Test that repeat-edit does not overwrite helixel--last-edit."
+  "Test that repeat-edit does not overwrite helixel--last-tx."
   (helixel-test-with-buffer "hello world"
     (goto-char 7)
     (kill-word 1)
     (setq last-command nil this-command 'helixel-yank)
     (helixel-yank)
-    (let ((before helixel--last-edit))
+    (let ((before helixel--last-tx))
       (helixel-repeat-edit)
-      (should (equal helixel--last-edit before)))))
+      (should (equal helixel--last-tx before)))))
 
 (ert-deftest helixel-test-repeat-edit-clear-data ()
   "Test repeat-edit clears selection data after operation."
@@ -2978,10 +2978,10 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   "Test repeat insert-text (i style)."
   (helixel-test-with-buffer "hello world"
     (goto-char 7)
-    (setq helixel--last-edit
-          '(:operator insert-text
-                      :sel-ctx nil
-                      :change-text "INSERTED"))
+    (setq helixel--last-tx
+          '(:op insert-text
+                      :sel nil
+                      :payload (:text "INSERTED")))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "hello INSERTEDworld"))))
 
@@ -2989,10 +2989,10 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   "Test repeat insert-text with empty text does nothing."
   (helixel-test-with-buffer "hello world"
     (goto-char 7)
-    (setq helixel--last-edit
-          '(:operator insert-text
-                      :sel-ctx nil
-                      :change-text ""))
+    (setq helixel--last-tx
+          '(:op insert-text
+                      :sel nil
+                      :payload (:text "")))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "hello world"))))
 
@@ -3000,9 +3000,9 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   "Test repeat kill with movement selection (v w d style)."
   (helixel-test-with-buffer "hello world foo"
     (goto-char 1)
-    (setq helixel--last-edit
-          `(:operator kill
-                      :sel-ctx (:kind movement
+    (setq helixel--last-tx
+          `(:op kill
+                      :sel (:kind movement
                                 :moves ((helixel-forward-word-start . 2)))))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "foo"))))
@@ -3011,11 +3011,11 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   "Test repeat change with movement selection (v w c style)."
   (helixel-test-with-buffer "hello world foo"
     (goto-char 1)
-    (setq helixel--last-edit
-          `(:operator change
-                      :sel-ctx (:kind movement
+    (setq helixel--last-tx
+          `(:op change
+                      :sel (:kind movement
                                 :moves ((helixel-forward-word-start . 1)))
-                      :change-text "X"))
+                      :payload (:inserted-text "X")))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "Xworld foo"))))
 
@@ -3046,10 +3046,10 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   "Test helixel-insert-after (a) records insert-text."
   (helixel-test-with-buffer "hello world"
     (goto-char 3)
-    (setq helixel--last-edit nil
+    (setq helixel--last-tx nil
           helixel--change-track-marker nil)
     (helixel-insert-after)
-    (should (eq (plist-get helixel--last-edit :operator) 'insert-text))
+    (should (eq (helixel-edit-op helixel--last-tx) 'insert-text))
     (should helixel--change-track-marker)
     (set-marker helixel--change-track-marker nil)
     (setq helixel--change-track-marker nil)))
