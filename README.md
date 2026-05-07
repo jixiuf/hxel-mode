@@ -32,6 +32,14 @@ Requires Emacs >= 29.1.
 | `;` | Set mark to previous session start |
 | `M-.` | Repeat last find-char |
 | `n` `N` | Repeat / reverse direction repeat (`C-u n` pick from history) |
+| `.` | Repeat last edit (kill, change, paste, insert, ...) |
+| `i` `a` `I` `A` `o` `O` | Enter insert mode |
+| `v` | Enter visual mode |
+| `d` `c` `y` `r` `R` | Edit: delete, change, copy, replace, replace-char |
+| `p` `P` | Paste after / before |
+| `<` `>` | Indent left / right |
+| `u` `U` | Undo / redo |
+| `x` | Select current line |
 | `g` | Goto prefix |
 | `SPC` | Space prefix (LSP / project) |
 | `C-w` | Window prefix |

@@ -2,7 +2,18 @@
 
 ## Current Status (2026-05-07)
 
-**Completed**: Phases 1–6, all 247 tests passing.
+**Completed**: Phases 1–9, all 251 tests passing.
+
+## Module Structure
+
+```
+helixel.el
+  ├── helixel-action.el  (ring, ; group-skipping, edit category)
+  ├── helixel-repeat.el  (NEW: . infrastructure — recording, sel-ctx, replay)
+  ├── helixel-common.el  (state machine, editing commands, movements, keymaps)
+  ├── helixel-search.el  (search/find-char, n/N repeat context)
+  └── helixel-textobj.el (text objects, hooks-based decoupling)
+```
 
 ## Completed Phases
 
@@ -18,7 +29,7 @@
 
 ### Phase 3 — Selection context tracking
 - `helixel--repeat-sel-ctx` set by all textobj macros/functions, line select,
-  rect select — records `(:fn this-command :type TYPE)`
+  rect select — records `(:fn FUNCTION :kind KIND)`
 - Pair/quote/tag/block functions now consistently set `helixel--selection-type = 'textobj`
 
 ### Phase 4 — Edit recording
@@ -29,7 +40,7 @@
 
 ### Phase 5 — Repeat edit execution
 - `helixel-repeat-edit` bound to `.` in normal mode
-- Recreates selection via stored sel-ctx function, then replays operator
+- Recreates selection via stored sel-ctx, then replays operator
 - `helixel--repeat-change-core` for change operations
 - `helixel--delete-selection` extracted as shared kill core (no recording, no clear-data)
 
@@ -37,56 +48,57 @@
 - 10 new ERT tests: no-prev error, paste, replace-char, indent, kill-textobj,
   kill-linewise, change-textobj, preserves-last-edit, clear-data, copy repeat
 
+### Phase 7 — Insert-mode text repeat
+- All insert-entry commands (`i`/`I`/`a`/`A`/`o`/`O`) now record `insert-text`
+- Reuses `change-track-marker` pattern to capture typed text
+- `.` inserts stored text at point
+- 2 new tests: insert-text, empty insert-text
+
+### Phase 8 — Charwise movement repeat
+- `helixel--track-visual-move` accumulates movement commands during visual mode
+  into `sel-ctx :moves` list `((CMD . COUNT) ...)`
+- `.` replays movements with visual-state binding to extend selection
+- Injected into `helixel-define-movement` and `helixel--with-movement-surround` macros
+- 2 new tests: movement-kill, movement-change
+
+### Phase 9 — Extract repeat to dedicated module
+- New file `helixel-repeat.el` with all repeat infrastructure
+- Variables moved: `helixel--repeat-sel-ctx`, `helixel--last-edit`,
+  `helixel--change-track-marker`, `helixel--inhibit-repeat-record`
+- Functions moved: `helixel--record-edit`, `helixel-repeat-edit`,
+  `helixel--repeat-change-core`
+- New unified dispatcher: `helixel--recreate-selection(sel-ctx)`
+- `:type` → `:kind` normalization throughout
+- `helixel--delete-selection` and `helixel--track-visual-move` stay in
+  `helixel-common.el` (tight coupling with movement macros there)
+- helixel-repeat uses `declare-function` for helixel-common editing commands
+  (load-time safe, no circular dependency)
+
 ## Architecture Summary
 
 ```
-selection command → helixel--repeat-sel-ctx (:fn ... :type ...)
+selection command → helixel--repeat-sel-ctx (:fn F :kind K) or (:kind movement :moves ...)
          │
          ▼
 edit command → helixel--record-edit → helixel--last-edit (for .)
          │              │
          │              └→ action-start 'edit → ring (for ;)
          ▼
-   . → helixel-repeat-edit() → read last-edit → funcall sel-ctx.fn → execute
-```
-
-Shared kill core:
-```
-helixel--delete-selection → delete region/char, push to kill-ring
-  Used by: helixel-kill-thing-at-point (d)
-           helixel-change-thing-at-point (c)
-           helixel--repeat-change-core (.)
+   . → helixel-repeat-edit()
+         → helixel--recreate-selection(sel-ctx)  ← unified dispatcher
+         → execute operator
 ```
 
 ## Future Work
 
-### Priority 1 — Charwise movement repeat
-**Problem**: `v w d` then `.` can't repeat because the charwise selection
-from movement has no `sel-ctx`.
-**Approach**: Extend `sel-ctx` to support `:moves` list:
-```elisp
-;; Current: single function
-(:fn helixel-mark-inner-word :type textobj)
-
-;; Future: movement sequence
-(:moves ((helixel-forward-word-start . 1) (helixel-forward-word-end . 1))
- :type movement)
-```
-Commands in visual mode would accumulate moves into a running list,
-then `d`/`c`/`y` would store the list as part of `sel-ctx`.
-
-### Priority 2 — Count prefix support
+### Priority 1 — Count prefix support
 **Problem**: `3 x d` (select 3 lines, delete) doesn't store count.
-**Approach**: Add `:count` to `sel-ctx` plist, read `current-prefix-arg` in
-selection commands.
+Most helixel commands don't consume `current-prefix-arg`.
+**Approach**: Add `:count` to `sel-ctx` plist.
 
-### Priority 3 — Insert-mode typing repeat
-**Problem**: `ihello<ESC>` doesn't record as an edit — `.` repeats
-whatever edit happened BEFORE entering insert mode.
-**Approach**: Track inserted text during insert mode similar to
-change tracking, or record key sequences.
+### Priority 2 — `C-u .` edit history browsing
+**Approach**: Reuse action ring + `C-u n` pattern to select from edit history.
 
 ### Lower Priority
 - **Undo repeat**: `.` after `u`/`U` — debatable value
-- **`C-u .`** edit history browsing — reuse action ring + `C-u n` pattern
 - **Cross-buffer repeat**: last-edit is buffer-local

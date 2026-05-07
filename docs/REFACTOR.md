@@ -600,3 +600,126 @@ Removed redundant `helixel--live-put :marker` / `helixel--live-search-set` /
 done-hook or not affecting the result).  Commit is explicit in
 `history-execute` via `helixel-action-commit` for both search and
 find-char paths.
+
+---
+
+## 15. Phase F — Repeat Edit Architecture (2026-05-07)
+
+> **Goal**: Implement dot-repeat (`.`) — replay the last editing operation
+> at the current cursor position.
+
+### 15.1. Action System Changes (`helixel-action.el`)
+
+**Remove dedup from `helixel-action-start`**:
+- Previously: same `(category subcat)` → preserve marker, skip ring push
+- Now: always push old valid action, always create fresh marker
+- Result: `www` creates 3 ring entries instead of 1
+
+**Add group-skipping to `;` cycling**:
+- `helixel-action--same-group-p`, `helixel-action--cycle-group-start`,
+  `helixel-action--cycle-group-newest`
+- `;` shows the oldest entry in each consecutive same-group run
+- Equivalent UX to old dedup, but ring is complete
+
+**Marker-aware content dedup**:
+- `helixel-action--same-content-p` now compares marker positions
+- Prevents same-type operations at different positions from being merged
+
+**New `edit` category**:
+- Added to cycle-categories, display format, content comparison
+- `helixel--live-edit-set(operator sel-type sel-fn &rest extra)` atomic setter
+
+### 15.2. Selection Context (`helixel--repeat-sel-ctx`)
+
+Set by textobj/line/rect/movement selection commands, read by edit commands:
+```elisp
+;; textobj/line/rect:
+(:fn helixel-mark-inner-word :kind textobj)
+
+;; movement (accumulated during visual mode):
+(:kind movement :moves ((helixel-forward-word-start . 2) (helixel-next-line . 1)))
+```
+
+Setters added to:
+- All textobj macros (`helixel-define-mark-object/pair/quote/regex-textobj`)
+- Manual tag/block functions
+- `helixel-select-line`, `helixel-select-line-up`, `helixel-select-rectangle`
+- `helixel--track-visual-move` injected into `helixel-define-movement` and
+  `helixel--with-movement-surround` macros
+
+Fixed: pair/quote/tag/block functions now set `helixel--selection-type = 'textobj`.
+
+### 15.3. Edit Recording (`helixel--record-edit`)
+
+All 9 editing commands call `helixel--record-edit(operator)` before executing:
+
+| Key | Operator | Extra |
+|-----|----------|-------|
+| `d` | `kill` | — |
+| `c` | `change` | track-marker for change-text |
+| `y` | `copy` | — |
+| `r` | `replace` | — |
+| `R` | `replace-char` | `:replace-char CHAR` |
+| `p` | `paste-after` | — |
+| `P` | `paste-before` | — |
+| `<` | `indent-left` | — |
+| `>` | `indent-right` | — |
+| `i`/`I`/`a`/`A`/`o`/`O` | `insert-text` | track-marker for text |
+
+Recording also creates an `(edit OPERATOR)` action in the ring for `;` jumping.
+
+**Shared kill core**: `helixel--delete-selection` extracts the deletion logic
+(push to kill-ring, no record, no clear-data) used by kill, change, and
+repeat-change-core.
+
+**Change text tracking**: `helixel--change-track-marker` set before entering
+insert mode, read in `helixel-insert-exit` to extract `:change-text`.
+
+**Bug fix**: `c` and `r` compound commands double-recorded edits (e.g.,
+`change` → `kill` overwrote the change record). Fixed via
+`helixel--inhibit-repeat-record` on inner calls.
+
+### 15.4. Dot-Repeat Execution
+
+`helixel-repeat-edit` bound to `.` in normal mode:
+
+1. Read `helixel--last-edit` (:operator, :sel-ctx, :change-text, ...)
+2. `helixel--recreate-selection(sel-ctx)` — unified dispatcher
+   - `:fn` present → `(funcall fn)` (textobj, line, rect)
+   - `:kind movement` → replay `:moves` with `helixel--current-state='visual`
+3. Execute operator (kill/copy/paste/indent/insert-text/...)
+
+### 15.5. Movement Repeat
+
+Movements during visual mode accumulate via `helixel--track-visual-move`:
+- Same command repeated → increment count
+- Different command → push new entry
+- Stored as `(:kind movement :moves ((CMD . COUNT) ...))`
+
+On `.` replay, `helixel--current-state` is let-bound to `'visual` so that
+movements extend the region (not create fresh ones).
+
+### 15.6. Module Extraction
+
+All repeat infrastructure extracted to `helixel-repeat.el`:
+- Variables: `helixel--repeat-sel-ctx`, `helixel--last-edit`,
+  `helixel--change-track-marker`, `helixel--inhibit-repeat-record`
+- Functions: `helixel--record-edit`, `helixel-repeat-edit`,
+  `helixel--repeat-change-core`, `helixel--recreate-selection`
+- `sel-ctx` key `:type` → `:kind` normalization throughout
+
+Dependencies: `helixel-repeat` → `helixel-action` (load time).
+Editing commands called at runtime via `declare-function` to avoid
+circular dependency with `helixel-common`.
+
+`helixel--delete-selection` and `helixel--track-visual-move` stay in
+`helixel-common.el` (tightly coupled to movement macros and editing commands there).
+
+### 15.7. Tests (251 total, +14 new)
+
+Repeat-specific tests:
+- No-prev error, paste, replace-char, indent, kill-textobj, kill-linewise,
+  change-textobj, preserves-last-edit, clear-data, copy
+- Insert-text, empty insert-text
+- Movement-kill, movement-change
+
