@@ -156,8 +156,10 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
   "Switch to insert state at the beginning of the selection."
   (interactive)
   (helixel-action-start 'state 'insert)
+  (helixel--record-edit 'insert-text)
   (if (use-region-p)
       (goto-char (region-beginning)))
+  (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
 (defun helixel-insert-exit ()
@@ -165,7 +167,8 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
   (interactive)
   (helixel-action-start 'state 'exit)
   (when (and helixel--change-track-marker
-             (eq (plist-get helixel--last-edit :operator) 'change))
+             (member (plist-get helixel--last-edit :operator)
+                     '(change insert-text)))
     (let ((text (buffer-substring helixel--change-track-marker (point))))
       (plist-put helixel--last-edit :change-text text))
     (set-marker helixel--change-track-marker nil)
@@ -610,7 +613,8 @@ Also creates an edit action in the ring (for `;' jumping)."
       ('paste-before (helixel-yank-before))
       ('indent-left (helixel-indent-left))
       ('indent-right (helixel-indent-right))
-      ('change (helixel--repeat-change-core)))))
+      ('change (helixel--repeat-change-core))
+      ('insert-text (insert (or (plist-get helixel--last-edit :change-text) ""))))))
 
 (defun helixel--delete-selection ()
   "Delete current region or char at point, pushing to kill-ring.
@@ -692,32 +696,40 @@ When selection is rect, replay inserted text on all rect lines."
 (defun helixel-insert-beginning-line ()
   "Move current point to the beginning of line and enter insert mode."
   (interactive)
+  (helixel--record-edit 'insert-text)
   (beginning-of-line)
+  (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
 (defun helixel-insert-after-end-line ()
   "Move current point to the end of line and enter insert mode."
   (interactive)
+  (helixel--record-edit 'insert-text)
   (end-of-line)
+  (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
 (defun helixel-insert-newline ()
   "Insert newline and change `helixel--current-state' to INSERT mode."
   (interactive)
+  (helixel--record-edit 'insert-text)
   (helixel--clear-data)
   (end-of-line)
   (newline-and-indent)
+  (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
 (defun helixel-insert-prevline ()
   "Insert line above and change `helixel--current-state' to INSERT mode."
   (interactive)
+  (helixel--record-edit 'insert-text)
   (helixel--clear-data)
   (beginning-of-line)
   (let ((electric-indent-mode nil))
     (newline nil t)
     (call-interactively #'previous-line)
     (indent-according-to-mode))
+  (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
 (defun helixel--replace-region (start end text)

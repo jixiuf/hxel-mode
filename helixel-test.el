@@ -2974,5 +2974,27 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (helixel-repeat-edit)
     (should (string= (current-kill 0 t) "world"))))
 
+(ert-deftest helixel-test-repeat-edit-insert-text ()
+  "Test repeat insert-text (i style)."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 7)
+    (setq helixel--last-edit
+          '(:operator insert-text
+                      :sel-ctx nil
+                      :change-text "INSERTED"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "hello INSERTEDworld"))))
+
+(ert-deftest helixel-test-repeat-edit-insert-text-empty ()
+  "Test repeat insert-text with empty text does nothing."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 7)
+    (setq helixel--last-edit
+          '(:operator insert-text
+                      :sel-ctx nil
+                      :change-text ""))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "hello world"))))
+
 (provide 'helixel-test)
 ;;; helixel-test.el ends here
