@@ -625,10 +625,12 @@ When selection is rect, replay inserted text on all rect lines."
 (defun helixel-insert-after ()
   "Swap to insert mode at the end of the selection."
   (interactive)
+  (helixel--record-edit 'insert-text)
   (if (use-region-p)
       (goto-char (region-end))
     (unless (helixel--end-of-line-p)
       (forward-char)))
+  (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
 (defun helixel-insert-beginning-line ()

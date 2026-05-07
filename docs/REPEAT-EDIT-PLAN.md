@@ -2,7 +2,7 @@
 
 ## Current Status (2026-05-07)
 
-**Completed**: Phases 1–9, all 251 tests passing.
+**Completed**: Phases 1–9, all 254 tests passing.
 
 ## Module Structure
 
@@ -77,12 +77,14 @@ helixel.el
 ## Architecture Summary
 
 ```
-selection command → helixel--repeat-sel-ctx (:fn F :kind K) or (:kind movement :moves ...)
+selection command → helixel--repeat-sel-ctx
+                     (:fn F :kind K) or (:kind movement :moves ...)
          │
          ▼
-edit command → helixel--record-edit → helixel--last-edit (for .)
+edit command → helixel--record-edit(operator)
          │              │
-         │              └→ action-start 'edit → ring (for ;)
+         │              ├→ helixel--last-edit (:operator ... :sel-ctx ...) (for .)
+         │              └→ action-start 'edit → ring with full :sel-ctx (for ;)
          ▼
    . → helixel-repeat-edit()
          → helixel--recreate-selection(sel-ctx)  ← unified dispatcher
@@ -102,3 +104,21 @@ Most helixel commands don't consume `current-prefix-arg`.
 ### Lower Priority
 - **Undo repeat**: `.` after `u`/`U` — debatable value
 - **Cross-buffer repeat**: last-edit is buffer-local
+
+## Fixes (2026-05-07)
+
+### Bug fix — `a` missing insert-text record
+`helixel-insert-after` was missing `record-edit 'insert-text` and
+`change-track-marker`. All other insert-entry commands had both.
+Fixed, with an invariant test.
+
+### Schema unification — `helixel--live-edit-set` takes `sel-ctx`
+Changed from `(operator sel-type sel-fn &rest extra)` to
+`(operator sel-ctx &rest extra)`. The action ring now stores the
+full `:sel-ctx` plist instead of splitting `:sel-type`/`:sel-fn`.
+This aligns the action layer with the repeat layer's data model.
+
+### Invariant tests added
+- `record-edit` consumes `helixel--repeat-sel-ctx`
+- `.` does not pollute the action ring beyond what `record-edit` added
+- `helixel-insert-after` records `insert-text`

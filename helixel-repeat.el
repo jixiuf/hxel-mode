@@ -103,8 +103,7 @@ Also creates an edit action in the ring (for `;' jumping)."
             helixel--repeat-sel-ctx nil)
       (helixel-action-start 'edit operator)
       (apply #'helixel--live-edit-set operator
-             (plist-get (plist-get edit :sel-ctx) :kind)
-             (plist-get (plist-get edit :sel-ctx) :fn)
+             (plist-get edit :sel-ctx)
              extra)
       (helixel-action-commit))))
 

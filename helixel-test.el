@@ -3019,5 +3019,38 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (helixel-repeat-edit)
     (should (string= (buffer-string) "Xworld foo"))))
 
-(provide 'helixel-test)
+(ert-deftest helixel-test-repeat-invariant-sel-ctx-consumed ()
+  "Test record-edit consumes helixel--repeat-sel-ctx."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (should helixel--repeat-sel-ctx)
+    (setq last-command 'helixel-mark-inner-word this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (should (null helixel--repeat-sel-ctx))))
+
+(ert-deftest helixel-test-repeat-invariant-repeat-no-pollute-ring ()
+  "Test repeat-edit does not add extra entries to the action ring beyond record-edit."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (let ((ring-len (length helixel--action-ring)))
+      (helixel-repeat-edit)
+      (should (= (length helixel--action-ring) ring-len)))))
+
+(ert-deftest helixel-test-repeat-invariant-insert-after-records ()
+  "Test helixel-insert-after (a) records insert-text."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 3)
+    (setq helixel--last-edit nil
+          helixel--change-track-marker nil)
+    (helixel-insert-after)
+    (should (eq (plist-get helixel--last-edit :operator) 'insert-text))
+    (should helixel--change-track-marker)
+    (set-marker helixel--change-track-marker nil)
+    (setq helixel--change-track-marker nil)))
 ;;; helixel-test.el ends here

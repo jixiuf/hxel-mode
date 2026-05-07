@@ -168,15 +168,13 @@ The sub-plist is keyed by the keyword form of :category'."
                             (intern (format ":%s" cat)))
                  key))))
 
-(defun helixel--live-edit-set (operator sel-type sel-fn &rest extra)
+(defun helixel--live-edit-set (operator sel-ctx &rest extra)
   "Set :edit sub-plist on the live action.
 OPERATOR: symbol (kill, change, copy, replace, etc.)
-SEL-TYPE: textobj | line | rect | nil
-SEL-FN: function symbol or nil
+SEL-CTX: selection context plist (:fn ... :kind ...) or nil
 EXTRA: additional keyword-value pairs (:change-text, :replace-char, ...)"
   (plist-put helixel--action :edit
-            `(:operator ,operator :sel-type ,sel-type
-                        :sel-fn ,sel-fn ,@extra)))
+            `(:operator ,operator :sel-ctx ,sel-ctx ,@extra)))
 
 ;; ── Content comparison ──
 
@@ -282,18 +280,19 @@ and \"cat.subcat\" for other actions."
                   (if (eq dir 'forward) ?t ?T))
                 char)))
      ((eq cat 'edit)
-      (let* ((sub (plist-get action :edit))
-             (op (plist-get sub :operator))
-             (op-str (cl-case op
-                       (kill "d") (change "c") (copy "y")
-                       (replace "r") (paste-after "p") (paste-before "P")
-                       (indent-left "<") (indent-right ">")
-                       (replace-char "R")
-                       (t (symbol-name op))))
-             (sel-type (plist-get sub :sel-type)))
-        (if sel-type
-            (format "%s.%s" op-str sel-type)
-          op-str)))
+       (let* ((sub (plist-get action :edit))
+              (op (plist-get sub :operator))
+              (op-str (cl-case op
+                        (kill "d") (change "c") (copy "y")
+                        (replace "r") (paste-after "p") (paste-before "P")
+                        (indent-left "<") (indent-right ">")
+                        (replace-char "R")
+                        (t (symbol-name op))))
+              (sel-ctx (plist-get sub :sel-ctx))
+              (sel-kind (plist-get sel-ctx :kind)))
+         (if sel-kind
+             (format "%s.%s" op-str sel-kind)
+           op-str)))
      ((and (eq cat 'state) (eq (plist-get action :subcat) 'cancel))
       "C-g")
      (t (format "%s.%s" cat (plist-get action :subcat))))))
