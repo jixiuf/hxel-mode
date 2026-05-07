@@ -1227,6 +1227,194 @@ match (that caused COUNT to reach zero)."
       (goto-char (if (> dir 0) (point-max) (point-min)))
       (if (/= (point) orig) (setq count (1- count))))
     (* dir count)))
+
+;; ============================================================================
+;; Generic Regex Block Text Objects (org begin/end, markdown fences, etc.)
+;; ============================================================================
+
+(defun helixel-up-regex-block (begin-re end-re &optional count name-group)
+  "Move point past matching delimiters defined by BEGIN-RE and END-RE.
+
+With positive COUNT, move forward COUNT levels.  With negative COUNT,
+move backward |COUNT| levels.
+
+If NAME-GROUP is an integer, only match blocks with the same name
+captured by that regex group in both BEGIN-RE and END-RE (e.g., 1 for
+org-mode #+begin_foo / #+end_foo).  The two regexps must capture the
+block name in the same group number.
+
+If NAME-GROUP is nil, use counter-based balancing: each BEGIN-RE match
+increments the counter, each END-RE match decrements it.  When the
+counter reaches zero, a matching pair has been found.  When BEGIN-RE
+equals END-RE (e.g., markdown ``` fences), each match simply toggles
+the counter.
+
+Sets `match-data' on success so callers can extract the delimiter
+bounds via `match-beginning' / `match-end'.
+
+Returns 0 on success, or (* dir remaining) when not all levels found."
+  (if name-group
+      (helixel--up-regex-block-named begin-re end-re count name-group)
+    (helixel--up-regex-block-counter begin-re end-re count)))
+
+(defun helixel--regexp-group-count (regexp)
+  "Count the number of \\(...\\) capture groups in REGEXP.
+Handles escaped backslashes."
+  (let ((count 0) (i 0) (len (length regexp)))
+    (while (< i len)
+      (when (and (eq (aref regexp i) ?\\)
+                 (< (1+ i) len))
+        (let ((next (aref regexp (1+ i))))
+          (cond
+           ((eq next ?\() (setq count (1+ count) i (1+ i)))
+           ((eq next ?\\) (setq i (1+ i))))))
+      (setq i (1+ i)))
+    count))
+
+(defun helixel--up-regex-block-named (begin-re end-re count name-group)
+  "Named-block variant of `helixel-up-regex-block'.
+NAME-GROUP specifies which capture group in BEGIN-RE and END-RE
+contains the block name (1-based)."
+  (let* ((dir (if (> count 0) +1 -1))
+         (count (abs count))
+         (orig (point))
+         ;; In the combined regex \(begin-re\)\|\(end-re\):
+         ;; - Group 1 = outer begin wrapper
+         ;; - Groups 2..1+N = sub-groups of begin-re (N = ngroups in begin-re)
+         ;; - Group 2+N = outer end wrapper
+         ;; - Groups 3+N.. = sub-groups of end-re
+         (ngroups-begin (helixel--regexp-group-count begin-re))
+         (begin-outer 1)
+         (end-outer   (+ 2 ngroups-begin))
+         ;; Name groups within the combined regex (same for begin/end)
+         (begin-name  (+ 1 name-group))
+         (end-name    (+ end-outer name-group))
+         ;; In forward direction: opener=begin, closer=end; backward swaps
+         (op-outer (if (> dir 0) begin-outer end-outer))
+         (cl-outer (if (> dir 0) end-outer begin-outer))
+         (op-name  (if (> dir 0) begin-name end-name))
+         (cl-name  (if (> dir 0) end-name begin-name))
+         pnt tags match
+         (combined-re (concat "\\(" begin-re "\\)\\|\\(" end-re "\\)")))
+    (catch 'done
+      (while (> count 0)
+        ;; Phase 1: find the target closer/opener
+        (while
+            (and (setq match (re-search-forward combined-re nil t dir))
+                 (cond
+                  ((match-beginning op-outer)   ; found opener (in search dir)
+                   (push (match-string op-name) tags))
+                  ((null tags) nil)              ; closer with empty stack: target
+                  ((and (< dir 0)
+                        (string= (car tags) (match-string cl-name)))
+                   ;; backward: matching closer, pop; break if stack empty
+                   (pop tags)
+                   (not (null tags)))
+                  ((> dir 0)
+                   ;; forward: pop matching closer (skip non-matching first)
+                   (while (and tags
+                               (not (string= (car tags)
+                                             (match-string cl-name))))
+                     (pop tags))
+                   (pop tags)
+                   (not (null tags)))           ; break if stack now empty
+                  (t t))))                       ; non-matching closer: skip
+        (unless (setq match (and match (match-data t)))
+          (setq match nil)
+          (throw 'done count))
+        ;; Phase 2: find the matching counterpart from target position
+        (cond
+         ((> dir 0)
+          (setq pnt (match-end 0))
+          (goto-char (match-beginning 0)))
+         (t
+          (setq pnt (match-beginning 0))
+          (goto-char (match-end 0))))
+        (let* ((balanced-re (concat "\\(" begin-re "\\)\\|\\(" end-re "\\)"))
+               (cnt 1))
+          ;; Search for both begin and end, using the same formula as
+          ;; helixel-up-xml-tag Phase 2.  Nesting is tracked purely by
+          ;; the counter; names do not need filtering because the
+          ;; begin/end alternation alone correctly balances nested
+          ;; blocks in well-formed documents.
+          (while (and (> cnt 0)
+                      (re-search-forward balanced-re nil t (- dir)))
+            (let ((is-begin (match-beginning begin-outer)))
+              (setq cnt (+ cnt (if is-begin (- dir) dir)))))
+          (if (zerop cnt)
+              (setq count (1- count) tags nil)
+            (goto-char pnt))))
+      (if (> count 0)
+          (set-match-data nil)
+        (progn
+          (set-match-data match)
+          (goto-char (if (> dir 0) (match-end 0) (match-beginning 0))))))
+    ;; not found: go to limit
+    (unless (zerop count)
+      (set-match-data nil)
+      (goto-char (if (> dir 0) (point-max) (point-min)))
+      (when (/= (point) orig)
+        (setq count (1- count))))
+    (* dir count)))
+
+(defun helixel--up-regex-block-counter (begin-re end-re count)
+  "Counter-based variant of `helixel-up-regex-block'."
+  (let* ((dir (if (> count 0) +1 -1))
+         (remaining (abs count))
+         (orig (point)))
+    (if (string= begin-re end-re)
+        ;; Simple: each match is both open and close, just toggle
+        (let ((match nil))
+          (while (> remaining 0)
+            (setq match (re-search-forward begin-re nil t dir))
+            (if match
+                (progn
+                  (setq remaining (1- remaining))
+                  (unless (zerop remaining)
+                    (goto-char (if (> dir 0) (match-end 0) (match-beginning 0)))))
+              (goto-char (if (> dir 0) (point-max) (point-min)))
+              (setq remaining 0)))
+          (if match
+              (progn
+                (set-match-data (list (match-beginning 0) (match-end 0)))
+                0)
+            (* dir remaining)))
+      ;; Different begin/end: balanced counter
+      (let ((balanced-re (concat "\\(" begin-re "\\)\\|\\(" end-re "\\)"))
+            match)
+        (while (> remaining 0)
+          (setq match (re-search-forward balanced-re nil t dir))
+          (unless match
+            (goto-char (if (> dir 0) (point-max) (point-min)))
+            (setq remaining 0))
+          (when match
+            (if (match-beginning 1)
+                ;; Found begin: going forward = deeper nesting, going backward = target
+                (if (> dir 0)
+                    (setq remaining (1+ remaining))
+                  (setq remaining (1- remaining)))
+              ;; Found end: going forward = target, going backward = deeper nesting
+              (if (> dir 0)
+                  (setq remaining (1- remaining))
+                (setq remaining (1+ remaining))))
+            (when (> remaining 0)
+              (goto-char (if (> dir 0) (match-end 0) (match-beginning 0))))))
+        (if (and match (zerop remaining))
+            (progn (set-match-data (list (match-beginning 0) (match-end 0))) 0)
+          (* dir remaining))))))
+
+(defun helixel-select-regex-block (begin-re end-re beg end type count
+                                             &optional inclusive name-group)
+  "Return a range of COUNT delimited blocks defined by BEGIN-RE and END-RE.
+
+BEG END TYPE are the currently selected (visual) range.
+If INCLUSIVE is non-nil, the delimiters are included; otherwise excluded.
+NAME-GROUP, if an integer, enables name-based matching using that group."
+  (helixel-select-block
+   (lambda (&optional cnt)
+     (helixel-up-regex-block begin-re end-re cnt name-group))
+   beg end type count inclusive))
+
 (defun helixel--use-region-p()
   "Return non-nil when in visual state and the region is active."
   (and (use-region-p)
@@ -1428,6 +1616,134 @@ COUNT is the number of tags to select."
       (goto-char (cadr range)))))
 
 ;; ============================================================================
+;; Generic Block Text Objects (org blocks, markdown fences, etc.)
+;; ============================================================================
+
+(defcustom helixel-block-textobj-alist
+  '((org-mode . ("^#\\+begin_\\([^ \n\r]+\\)[^\n]*"
+                 "^#\\+end_\\([^ \n\r]+\\)[^\n]*" 1))
+    (markdown-mode . ("^```.*" "^```[ \t]*$" nil))
+    (gfm-mode . ("^```.*" "^```[ \t]*$" nil)))
+  "Alist mapping major modes to block delimiter patterns for `mi c' / `ma c'.
+
+Each entry has the form (MODE . (BEGIN-RE END-RE NAME-GROUP)).
+
+BEGIN-RE is a regexp matching the opening delimiter (e.g. `#+begin_src`).
+END-RE is a regexp matching the closing delimiter (e.g. `#+end_src`).
+NAME-GROUP is an integer specifying which capture group in both
+  BEGIN-RE and END-RE holds the block name.  Use nil for
+  counter-based matching (e.g. markdown ``` fences).
+
+The first entry whose MODE satisfies `derived-mode-p' in the current
+buffer is used.  You can customize this alist to add support for
+additional major modes."
+  :type '(alist :key-type symbol
+                :value-type
+                (list (regexp :tag "Begin regexp")
+                      (regexp :tag "End regexp")
+                      (choice (integer :tag "Name capture group")
+                              (const :tag "Counter-based" nil))))
+  :group 'helixel)
+
+(defun helixel-up-block-at-point (&optional count)
+  "Move point past matching block delimiters for the current major mode.
+
+Looks up `helixel-block-textobj-alist' to find delimiter regexps
+for the current `major-mode'.  Users can customize that alist to
+add support for additional modes.
+
+Returns 0 on success, non-zero if not all levels found."
+  (let ((spec (cl-some (lambda (entry)
+                         (when (derived-mode-p (car entry))
+                           (cdr entry)))
+                       helixel-block-textobj-alist)))
+    (if spec
+        (apply #'helixel-up-regex-block (nth 0 spec) (nth 1 spec)
+               count (cddr spec))
+      (user-error "No block text object for %s" major-mode))))
+
+(defun helixel-select-block-at-point (beg end type count &optional inclusive)
+  "Select block delimited text for the current major mode.
+
+See `helixel-up-block-at-point' for supported modes."
+  (unless inclusive (setq inclusive 'exclusive-line))
+  (helixel-select-block #'helixel-up-block-at-point beg end type count inclusive))
+
+(defun helixel-mark-inner-block (&optional count)
+  "Select inner block (org block, markdown fence, etc.).
+COUNT is the number of blocks to select."
+  (interactive "p")
+  (when helixel-textobj-action-function
+    (funcall helixel-textobj-action-function 'textobj 'block))
+  (let* ((range (helixel-select-block-at-point
+                 (when (helixel--use-region-p) (region-beginning))
+                 (when (helixel--use-region-p) (region-end))
+                 nil count nil)))
+    (when range
+      (push-mark (car range) nil t)
+      (goto-char (cadr range)))))
+
+(defun helixel-mark-a-block (&optional count)
+  "Select a block (org block, markdown fence, etc.).
+COUNT is the number of blocks to select."
+  (interactive "p")
+  (when helixel-textobj-action-function
+    (funcall helixel-textobj-action-function 'textobj 'block))
+  (let* ((range (helixel-select-block-at-point
+                 (when (helixel--use-region-p) (region-beginning))
+                 (when (helixel--use-region-p) (region-end))
+                 nil count t)))
+    (when range
+      (push-mark (car range) nil t)
+      (goto-char (cadr range)))))
+
+(defmacro helixel-define-regex-textobj (key name begin-re end-re
+                                            &optional name-group
+                                            subcat)
+  "Define text object commands for blocks delimited by BEGIN-RE and END-RE.
+
+KEY is a string for the textobj keymap binding (e.g. \"e\").
+NAME is a symbol for the command suffix (e.g. 'my-block).
+BEGIN-RE and END-RE are the opening/closing delimiter regexps.
+NAME-GROUP, if an integer, enables name-based matching using that group.
+SUBCAT is the textobj subcat symbol (default: 'block)."
+  (declare (indent defun))
+  (let ((inner-name (intern (format "helixel-mark-inner-%s" name)))
+        (outer-name (intern (format "helixel-mark-a-%s" name)))
+        (inner-doc (format "Select inner %s." name))
+        (outer-doc (format "Select a %s." name))
+        (cat (or subcat 'block)))
+    `(progn
+       (defun ,inner-name (&optional count)
+         ,inner-doc
+         (interactive "p")
+         (when helixel-textobj-action-function
+           (funcall helixel-textobj-action-function 'textobj ,cat))
+         (let* ((range (helixel-select-regex-block
+                        ,begin-re ,end-re
+                        (when (helixel--use-region-p) (region-beginning))
+                        (when (helixel--use-region-p) (region-end))
+                        nil count nil ,name-group)))
+           (when range
+             (push-mark (car range) nil t)
+             (goto-char (cadr range)))))
+       (defun ,outer-name (&optional count)
+         ,outer-doc
+         (interactive "p")
+         (when helixel-textobj-action-function
+           (funcall helixel-textobj-action-function 'textobj ,cat))
+         (let* ((range (helixel-select-regex-block
+                        ,begin-re ,end-re
+                        (when (helixel--use-region-p) (region-beginning))
+                        (when (helixel--use-region-p) (region-end))
+                        nil count t ,name-group)))
+           (when range
+             (push-mark (car range) nil t)
+             (goto-char (cadr range)))))
+       (define-key helixel-textobj-inner-map ,key #',inner-name)
+       (define-key helixel-textobj-outer-map ,key #',outer-name))))
+
+;; ============================================================================
 ;; Keymaps
 ;; ============================================================================
 
@@ -1448,6 +1764,7 @@ COUNT is the number of tags to select."
   "<"  #'helixel-mark-inner-angle
   ">"  #'helixel-mark-inner-angle
   "t"  #'helixel-mark-inner-tag
+  "c"  #'helixel-mark-inner-block
   "\`" #'helixel-mark-inner-back-quote
   "'"  #'helixel-mark-inner-single-quote
   "\"" #'helixel-mark-inner-double-quote)
@@ -1469,6 +1786,7 @@ COUNT is the number of tags to select."
   "<"  #'helixel-mark-a-angle
   ">"  #'helixel-mark-a-angle
   "t"  #'helixel-mark-a-tag
+  "c"  #'helixel-mark-a-block
   "\`" #'helixel-mark-a-back-quote
   "'"  #'helixel-mark-a-single-quote
   "\"" #'helixel-mark-a-double-quote)

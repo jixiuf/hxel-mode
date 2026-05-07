@@ -2685,5 +2685,143 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
                              :category) 'movement))
       (should (= (region-beginning) 1)))))
 
+;;; Regex block text object tests
+
+;; --- helixel-up-regex-block: counter-based (markdown fences) ---
+
+(ert-deftest helixel-test-up-regex-block-counter-same ()
+  "Test counter-based up-regex-block with same begin/end (markdown fence)."
+  (with-temp-buffer
+    (insert "before\n```\ncode\n```\nafter\n```\nmore\n```\ndone")
+    (goto-char 1)
+    (let ((mb (save-excursion
+                (should (= (helixel-up-regex-block "^```" "^```" 1 nil) 0))
+                (match-beginning 0))))
+      (should mb)
+      (goto-char mb)
+      (should (looking-at "```$")))))
+
+(ert-deftest helixel-test-up-regex-block-counter-diff ()
+  "Test counter-based up-regex-block with different begin/end."
+  (with-temp-buffer
+    (insert "before\n#+begin\na\n#+begin\nb\n#+end\nc\n#+end\nafter")
+    (goto-char (point-min))
+    (search-forward "a")
+    (let ((mb (save-excursion
+                (should (= (helixel-up-regex-block "^#\\+begin" "^#\\+end" 1 nil) 0))
+                (match-beginning 0))))
+      (should mb)
+      (goto-char mb)
+      (should (looking-at "^#\\+end$")))))
+
+;; --- helixel-up-regex-block: name-based (org blocks) ---
+
+(ert-deftest helixel-test-up-regex-block-named-forward ()
+  "Test named up-regex-block forward (org block)."
+  (with-temp-buffer
+    (insert "#+begin_src emacs-lisp\ncode\n#+end_src\nafter")
+    (goto-char (point-min))
+    (let ((mb (save-excursion
+                (should (= (helixel-up-regex-block "^#\\+begin_\\([^ \n\r]+\\)"
+                                                   "^#\\+end_\\([^ \n\r]+\\)"
+                                                   1 1) 0))
+                (match-beginning 0))))
+      (should mb)
+      (goto-char mb)
+      (should (looking-at "^#\\+end_src")))))
+
+(ert-deftest helixel-test-up-regex-block-named-nested ()
+  "Test named up-regex-block with nested org blocks."
+  (with-temp-buffer
+    (insert "#+begin_src emacs-lisp\nouter\n#+begin_example\ninner\n#+end_example\nmore\n#+end_src")
+    (goto-char (point-min))
+    (let ((mb (save-excursion
+                (should (= (helixel-up-regex-block "^#\\+begin_\\([^ \n\r]+\\)"
+                                                   "^#\\+end_\\([^ \n\r]+\\)"
+                                                   1 1) 0))
+                (match-beginning 0))))
+      (should mb)
+      (goto-char mb)
+      (should (looking-at "^#\\+end_src")))))
+
+;; --- helixel-select-regex-block integration ---
+
+(ert-deftest helixel-test-select-regex-block-inner-fence ()
+  "Test select inner markdown fence block."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "```python\nprint('hello')\n```")
+    (goto-char 14)
+    (let ((range (helixel-select-regex-block "^```.*" "^```[ \t]*$"
+                                              nil nil nil 1 nil)))
+      (should range)
+      (should (> (nth 0 range) 1))
+      (should (< (nth 0 range) 14))
+      (should (> (nth 1 range) (nth 0 range)))
+      (should (< (nth 1 range) (point-max))))))
+
+(ert-deftest helixel-test-select-regex-block-around-fence ()
+  "Test select around markdown fence block."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "```python\nprint('hello')\n```")
+    (goto-char 14)
+    (let ((range (helixel-select-regex-block "^```.*" "^```[ \t]*$"
+                                              nil nil nil 1 t)))
+      (should range)
+      (should (= (nth 0 range) 1))
+      (should (> (nth 1 range) 1)))))
+
+(ert-deftest helixel-test-select-regex-block-inner-org ()
+  "Test select inner org block."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "#+begin_src emacs-lisp\n(message \"hi\")\n#+end_src\n")
+    (goto-char 32)
+    (let ((range (helixel-select-regex-block
+                  "^#\\+begin_\\([^ \n\r]+\\)[^\n]*" "^#\\+end_\\([^ \n\r]+\\)[^\n]*"
+                  nil nil nil 1 nil 1)))
+      (should range)
+      (should (> (nth 0 range) 1))
+      (should (< (nth 0 range) 32))
+      (should (> (nth 1 range) (nth 0 range)))
+      (should (< (nth 1 range) (point-max))))))
+
+(ert-deftest helixel-test-select-regex-block-around-org ()
+  "Test select around org block."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "#+begin_src emacs-lisp\n(message \"hi\")\n#+end_src\n")
+    (goto-char 32)
+    (let ((range (helixel-select-regex-block
+                  "^#\\+begin_\\([^ \n\r]+\\)[^\n]*" "^#\\+end_\\([^ \n\r]+\\)[^\n]*"
+                  nil nil nil 1 t 1)))
+      (should range)
+      (should (= (nth 0 range) 1))
+      (should (> (nth 1 range) 1)))))
+
+;; --- helixel-up-block-at-point dispatch ---
+
+(ert-deftest helixel-test-up-block-at-point-org ()
+  "Test `helixel-up-block-at-point' dispatches to org block in org-mode."
+  (with-temp-buffer
+    (delay-mode-hooks (org-mode))
+    (insert "#+begin_src emacs-lisp\ncode\n#+end_src")
+    (goto-char (point-min))
+    (let ((mb (save-excursion
+                (should (= (helixel-up-block-at-point 1) 0))
+                (match-beginning 0))))
+      (should mb)
+      (goto-char mb)
+      (should (looking-at "^#\\+end_src")))))
+
+(ert-deftest helixel-test-up-block-at-point-unsupported ()
+  "Test `helixel-up-block-at-point' errors in unsupported mode."
+  (with-temp-buffer
+    (delay-mode-hooks (fundamental-mode))
+    (insert "```\ncode\n```")
+    (goto-char (point-min))
+    (should-error (helixel-up-block-at-point 1))))
+
 (provide 'helixel-test)
 ;;; helixel-test.el ends here
