@@ -2856,5 +2856,123 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
       (should (= (region-beginning) 9))   ; after (
       (should (= (region-end) 14)))))     ; at )
 
+;;; Repeat Edit tests
+
+(ert-deftest helixel-test-repeat-edit-no-prev ()
+  "Test repeat-edit with no previous edit signals error."
+  (helixel-test-with-buffer "hello world"
+    (setq helixel--last-edit nil)
+    (should-error (helixel-repeat-edit))))
+
+(ert-deftest helixel-test-repeat-edit-paste ()
+  "Test repeat paste."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 7)
+    (kill-word 1)
+    (setq last-command nil this-command 'helixel-yank)
+    (helixel-yank)
+    (should (string= (buffer-string) "hello world"))
+    (goto-char 7)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "hello worldworld"))))
+
+(ert-deftest helixel-test-repeat-edit-replace-char ()
+  "Test repeat replace-char."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-replace-char)
+    (helixel-replace-char ?X)
+    (should (string= (buffer-string) "Xello world"))
+    (goto-char 2)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "XXllo world"))))
+
+(ert-deftest helixel-test-repeat-edit-indent ()
+  "Test repeat indent right with line selection."
+  (helixel-test-with-buffer "hello\nworld\n"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line this-command 'helixel-indent-right)
+    (helixel-indent-right)
+    (let ((after-first (buffer-string)))
+      (should-not (string= "hello\nworld\n" after-first))
+      (next-line)
+      (helixel-repeat-edit)
+      (should-not (string= after-first (buffer-string))))))
+
+(ert-deftest helixel-test-repeat-edit-kill-textobj ()
+  "Test repeat kill with textobj selection (diw style)."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 3)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (should (string= (buffer-string) " world foo"))
+    (goto-char 3)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "  foo"))))
+
+(ert-deftest helixel-test-repeat-edit-kill-linewise ()
+  "Test repeat kill with linewise selection (x d style)."
+  (helixel-test-with-buffer "first line\nsecond line\nthird line\n"
+    (goto-char 3)
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (should (string= (buffer-string) "second line\nthird line\n"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "third line\n"))))
+
+(ert-deftest helixel-test-repeat-edit-change-textobj ()
+  "Test repeat change with textobj (ciw style)."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 3)
+    (setq helixel--last-edit
+          `(:operator change
+                      :sel-ctx (:fn helixel-mark-inner-word :type textobj)
+                      :change-text "CHANGED"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "CHANGED world foo"))
+    (goto-char 1)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "CHANGED world foo"))))
+
+(ert-deftest helixel-test-repeat-edit-preserves-last-edit ()
+  "Test that repeat-edit does not overwrite helixel--last-edit."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 7)
+    (kill-word 1)
+    (setq last-command nil this-command 'helixel-yank)
+    (helixel-yank)
+    (let ((before helixel--last-edit))
+      (helixel-repeat-edit)
+      (should (equal helixel--last-edit before)))))
+
+(ert-deftest helixel-test-repeat-edit-clear-data ()
+  "Test repeat-edit clears selection data after operation."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 7)
+    (kill-word 1)
+    (setq last-command nil this-command 'helixel-yank)
+    (helixel-yank)
+    (helixel-repeat-edit)
+    (should (null helixel--selection-type))))
+
+(ert-deftest helixel-test-repeat-edit-copy ()
+  "Test repeat copy (yank)."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word this-command 'helixel-kill-ring-save)
+    (helixel-kill-ring-save)
+    (should (string= (current-kill 0 t) "hello"))
+    (goto-char 7)
+    (helixel-repeat-edit)
+    (should (string= (current-kill 0 t) "world"))))
+
 (provide 'helixel-test)
 ;;; helixel-test.el ends here
