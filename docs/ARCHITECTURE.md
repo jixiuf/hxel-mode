@@ -5,12 +5,55 @@
 | File | Role |
 |------|------|
 | `helixel.el` | Entry point: requires sub-modules, provides `helixel` feature |
-| `helixel-action.el` | Action infrastructure: nested data model, ring API, group-skipping session cycling. |
-| `helixel-repeat.el` | Dot-repeat (`.`) infrastructure: recording (`helixel--record-edit`), selection context management, replay (`helixel-repeat-edit`). Requires helixel-action. |
-| `helixel-common.el` | State machine, keymaps, movement, editing, modes. Requires helixel-action, helixel-textobj, helixel-repeat. |
-| `helixel-search.el` | Search & find-char engine + repeat context (`helixel--repeat-dir`, `helixel--repeat-data`). Requires helixel-common. |
-| `helixel-textobj.el` | Text objects (word, symbol, etc.) with forward-ops. Independent of helixel-common via hooks. |
-| `helixel-test.el` | ERT test suite (251 tests) |
+| `helixel-edit.el` | **Edit transaction model**: unified schema (`:op :sel :payload :marker`), builder, equality, display. No helixel deps — kernel module. |
+| `helixel-action.el` | Action infrastructure: ring API, `;` group-skipping. Stores edit txs in ring. Requires helixel-edit. |
+| `helixel-repeat.el` | Dot-repeat (`.`): recording (`helixel--record-edit` → `helixel--last-tx`), selection replay, execution dispatcher. Requires helixel-action, helixel-edit. |
+| `helixel-common.el` | State machine, keymaps, movement, editing commands, shared kill core. Requires helixel-action, helixel-textobj, helixel-repeat. |
+| `helixel-search.el` | Search & find-char engine + repeat context. Requires helixel-common. |
+| `helixel-textobj.el` | Text objects. Independent of helixel-common via hooks. |
+| `helixel-test.el` | ERT test suite (254 tests) |
+
+### Dependency Graph
+
+```
+helixel-edit.el       kernel (no helixel deps)
+   ↓
+helixel-action.el     ring + ;  (requires helixel-edit)
+   ↓
+helixel-repeat.el     . infrastructure (requires helixel-action + edit)
+   ↓
+helixel-common.el     state machine + editing (requires all above)
+   ↓
+helixel-search.el     (requires helixel-common)
+```
+
+### Edit Transaction Schema (`helixel-edit.el`)
+
+All edit operations are represented as a single plist:
+
+```elisp
+(:op     symbol    ;; kill | change | copy | replace | replace-char
+                   ;; | paste-after | paste-before | indent-left | indent-right
+                   ;; | insert-text
+ :sel    plist|nil ;; selection context (:fn F :kind K) or nil
+ :payload plist    ;; operator-specific data
+ :marker marker)   ;; start position (for ; jumping)
+
+;; Payload per :op:
+;;   change:       (:inserted-text STRING)
+;;   replace-char: (:char CHAR)
+;;   insert-text:  (:text STRING)
+```
+
+Key functions:
+```elisp
+(helixel-edit-make op sel-ctx &rest payload-kv)  → tx
+(helixel-edit-op tx)       → :op
+(helixel-edit-sel tx)      → :sel
+(helixel-edit-payload tx)  → :payload
+(helixel-edit-equal-p a b) → boolean (ignores :marker)
+(helixel-edit-display tx)  → "d.textobj", "c", "p", etc.
+```
 
 ## Action Data Model (`helixel-action.el`)
 
@@ -34,7 +77,8 @@ Actions are plists.  Universal keys + one category sub-plist keyed by keyword:
 ;; state and textobj have no category-specific data
 
 (:category edit :subcat kill :marker <M> :display t
-  :edit (:operator kill :sel-type textobj :sel-fn helixel-mark-inner-word))
+  :edit (:op kill :sel (:fn helixel-mark-inner-word :kind textobj)
+         :payload nil :marker <M>))
 ```
 
 **Dedup removed from `action-start`** (2026-05): `helixel-action-start` now **always** pushes the old valid action to ring and **always** creates a fresh marker. The session-continuity dedup that collapsed `www` into one entry is gone.
@@ -61,7 +105,7 @@ External code must use these — no raw `plist-get`/`plist-put` on `helixel--act
 (helixel--live-search-set pattern dir)           ;; 2 required args
 (helixel--live-find-char-set type char dir)      ;; 3 required args
 (helixel--live-cat-set-dir dir)                  ;; shared :dir setter (live only)
-(helixel--live-edit-set operator sel-type sel-fn &rest extra)  ;; :edit sub-plist
+(helixel--live-edit-set tx)                       ;; store full tx in :edit sub-plist
 ```
 
 ### Ring API (Unified Push)
@@ -210,45 +254,43 @@ during cycling but remain in the ring for dedup purposes.")
 
 ---
 
-## Repeat Edit (`.`) (`helixel-repeat.el`)
+## Repeat Edit (`.`) — Transaction-Driven Architecture
 
 ### Overview
 
-Dot-repeat replays the last editing operation at the current cursor position.
-Supported operations: kill (`d`), change (`c`), copy (`y`), replace (`r`/`R`),
-paste (`p`/`P`), indent (`<`/`>`), insert-mode entry (`i`/`a`/`o`/...).
+All editing operations are represented as **edit transactions** (`helixel-edit.el`),
+a unified schema consumed by repeat (`.`), action ring (`;`), and editing commands.
+
+A transaction is a plist: `(:op OP :sel SEL-CTX :payload PAYLOAD :marker MARKER)`.
 
 ### Data Flow
 
 ```
-textobj/line/rect  → set sel-ctx (:fn F :kind K)
-movement in visual  → helixel--track-visual-move → accumulate :moves list
-         │
-         ▼
-edit command → helixel--record-edit(operator) → helixel--last-edit (for .)
-         │                    │
-         │                    └──→ helixel-action-start 'edit → ring (for ;)
-         ▼
-   . (dot) → helixel-repeat-edit() → read last-edit
-                                        │
-                   ┌────────────────────┘
-                   ▼
-              helixel--recreate-selection(sel-ctx)
-                   │
-                   ▼
-              execute operator via delete-selection / yank / insert / ...
+selection cmd → set helixel--repeat-sel-ctx
+  ↓
+edit cmd → helixel--record-edit(op, &rest payload-kv)
+  ↓
+helixel-edit-make(op, sel-ctx, payload) → tx (:op :sel :payload :marker)
+  ↓
+helixel--last-tx = tx            (dot-repeat consumer)
+helixel--live-edit-set(tx)       (action ring — ; jumping consumer)
+  ↓
+. → helixel-repeat-edit()
+  → helixel--recreate-selection(edit-sel tx)
+  → helixel--execute-edit(tx)    (unified dispatcher)
 ```
 
-### Key Variables (all in `helixel-repeat.el`)
+### Key Variables
 
 ```elisp
-helixel--repeat-sel-ctx       ;; Set by selection commands, consumed by record-edit
-                              ;; (:fn FUNCTION :kind textobj|line|rect) or
-                              ;; (:kind movement :moves ((CMD . COUNT) ...))
-helixel--last-edit             ;; Latest edit plist
-                              ;; (:operator SYMBOL :sel-ctx PLIST :change-text STR|nil)
-helixel--change-track-marker   ;; Tracks inserted text during change/insert operations
-helixel--inhibit-repeat-record ;; Prevents `.` and compound commands from re-recording
+;; helixel-repeat.el:
+helixel--repeat-sel-ctx       ;; Set by selection, consumed by record-edit
+helixel--last-tx               ;; Latest transaction (:op :sel :payload :marker)
+helixel--change-track-marker   ;; Tracks inserted text (change/insert operations)
+helixel--inhibit-repeat-record ;; Prevents re-recording during . and compound cmds
+
+;; helixel-edit.el (kernel, no side effects):
+;; No buffer-local state — pure data functions.
 ```
 
 ### Selection Replay
@@ -256,6 +298,11 @@ helixel--inhibit-repeat-record ;; Prevents `.` and compound commands from re-rec
 `helixel--recreate-selection(sel-ctx)` is the unified dispatcher:
 - `:fn` present → `(funcall fn)` (textobj, line, rect)
 - `:kind movement` → replay `:moves` list with visual state binding
+
+### Execution Dispatcher
+
+`helixel--execute-edit(tx)` maps `:op` to the appropriate execution function.
+`helixel-repeat-edit` is now 5 lines: read tx → recreate selection → execute.
 
 ### Shared Kill Core (`helixel-common.el`)
 
@@ -273,34 +320,32 @@ helixel--inhibit-repeat-record ;; Prevents `.` and compound commands from re-rec
 
 ### Recording Details
 
-Each editing command calls `helixel--record-edit(operator)` which:
-1. Stores the edit in `helixel--last-edit` (with current `helixel--repeat-sel-ctx`)
-2. Consumes `helixel--repeat-sel-ctx` (sets to nil)
-3. Calls `helixel-action-start 'edit operator` + `live-edit-set` + `action-commit`
-   → enters the action ring for `;` jumping
+`helixel--record-edit(operator &rest extra)` builds a tx via `helixel-edit-make`,
+stores it in `helixel--last-tx`, and pushes to the action ring. The `extra` kwargs
+become the tx `:payload`.
 
 The `helixel--inhibit-repeat-record` variable is bound to `t` during:
-- `helixel-repeat-edit` (to prevent `.` from overwriting `last-edit`)
+- `helixel-repeat-edit` (to prevent `.` from overwriting `last-tx`)
 - `helixel-replace` → `helixel-yank` internal call (to prevent double-record)
 
 ### Supported Operations
 
-| Key | Operator | Requires sel-ctx? | Extra data |
-|-----|----------|-------------------|------------|
-| `d` | `kill` | yes | — |
-| `c` | `change` | yes | `:change-text` (extracted from insert-exit) |
-| `y` | `copy` | yes | — |
-| `r` | `replace` | no | — |
-| `R` | `replace-char` | no | `:replace-char` CHAR |
-| `p` | `paste-after` | no | — |
-| `P` | `paste-before` | no | — |
-| `<` | `indent-left` | yes (line) | — |
-| `>` | `indent-right` | yes (line) | — |
-| `i`/`I`/`a`/`A`/`o`/`O` | `insert-text` | no | `:change-text` (extracted from insert-exit) |
+| Key | Operator | Requires sel-ctx? | Payload |
+|-----|----------|-------------------|---------|
+| `d` | `kill` | yes | nil |
+| `c` | `change` | yes | `(:inserted-text STRING)` |
+| `y` | `copy` | yes | nil |
+| `r` | `replace` | no | nil |
+| `R` | `replace-char` | no | `(:char CHAR)` |
+| `p` | `paste-after` | no | nil |
+| `P` | `paste-before` | no | nil |
+| `<` | `indent-left` | yes (line) | nil |
+| `>` | `indent-right` | yes (line) | nil |
+| `i`/`I`/`a`/`A`/`o`/`O` | `insert-text` | no | `(:text STRING)` |
 
-Sel-ctx types:
-- `textobj` / `line` / `rect` → `:fn FUNCTION` — replay by calling the function
-- `movement` → `:moves ((FN . COUNT) ...)` — replay in visual state to extend region
+Sel-ctx structure:
+- `(:fn FUNCTION :kind textobj|line|rect)` — replay by calling the function
+- `(:kind movement :moves ((FN . COUNT) ...))` — replay in visual state to extend region
 
 ### Not Recorded
 
@@ -314,9 +359,11 @@ Commands that do NOT generate repeatable edits:
 
 | Feature | Approach | Status |
 |---------|----------|--------|
-| Charwise movement repeat (`vw d` → `.`) | `:moves` list in `sel-ctx` with visual-state binding | ✅ DONE |
-| Insert-mode typing repeat (`ihello<ESC>`) | `change-track-marker` pattern in all insert-entry commands | ✅ DONE |
-| Count prefix repeat (`3x d` → `.`) | `:count` in `sel-ctx`, + make commands consume `current-prefix-arg` | 🔜 |
+| Charwise movement repeat (`vw d` → `.`) | `:moves` list in sel-ctx with visual-state binding | ✅ DONE |
+| Insert-mode typing repeat (`ihello<ESC>`) | `change-track-marker` in all insert-entry commands | ✅ DONE |
+| Unified edit transaction model | `helixel-edit.el`, tx schema shared by repeat/action | ✅ DONE |
+| Count prefix repeat (`3x d` → `.`) | `:count` in sel-ctx | 🔜 |
+| `C-u .` edit history browsing | Reuse action ring + `helixel-edit-display` | 🔜 |
 
 ---
 

@@ -2,10 +2,25 @@
 
 ## Current Status (2026-05-07)
 
-**Completed**: Phases 1–9, all 254 tests passing.
+**Completed**: Phases 1–10, all 254 tests passing.
+**Architecture**: Transaction-driven — single schema shared by repeat, action ring, and edit commands.
 
 ## Module Structure
 
+```
+helixel.el
+├── helixel-edit.el     (kernel: tx schema — :op :sel :payload :marker)
+├── helixel-action.el   (ring, ; group-skipping → stores tx in :edit)
+├── helixel-repeat.el   (. infrastructure — last-tx, record-edit, execute-edit)
+├── helixel-common.el   (state machine, editing commands, shared kill core)
+├── helixel-search.el   (search/find-char, n/N repeat context)
+└── helixel-textobj.el  (text objects, hooks-based decoupling)
+```
+
+Dependency chain (one-way, no cycles):
+```
+helixel-edit  →  helixel-action  →  helixel-repeat  →  helixel-common
+   (kernel)       (ring + ;)        (. dispatch)       (commands)
 ```
 helixel.el
   ├── helixel-action.el  (ring, ; group-skipping, edit category)
@@ -74,51 +89,48 @@ helixel.el
 - helixel-repeat uses `declare-function` for helixel-common editing commands
   (load-time safe, no circular dependency)
 
+### Phase 10 — Transaction-driven refactoring (4 sub-phases)
+- **Phase 10a**: New `helixel-edit.el` kernel module — unified tx schema
+  `(:op :sel :payload :marker)`, builder (`helixel-edit-make`), equality,
+  display. No helixel deps.
+- **Phase 10b**: Convert repeat to store transaction. `helixel--last-edit`
+  replaced by `helixel--last-tx`. `helixel--record-edit` builds tx via
+  `helixel-edit-make`. Tests updated.
+- **Phase 10c**: Unify action ring to store transaction. `helixel--live-edit-set`
+  takes `(tx)` instead of `(operator sel-ctx &rest extra)`. Action ring `:edit`
+  sub-plist is now a full tx. `helixel-action--same-content-p` delegates to
+  `helixel-edit-equal-p`. `helixel-action-display` delegates to `helixel-edit-display`.
+- **Phase 10d**: Extract execution dispatcher. `helixel--execute-edit(tx)`
+  maps `:op` to execution functions. `helixel-repeat-edit` reduced to 5 lines:
+  read tx → recreate selection → execute.
+
 ## Architecture Summary
 
 ```
-selection command → helixel--repeat-sel-ctx
-                     (:fn F :kind K) or (:kind movement :moves ...)
-         │
-         ▼
-edit command → helixel--record-edit(operator)
-         │              │
-         │              ├→ helixel--last-edit (:operator ... :sel-ctx ...) (for .)
-         │              └→ action-start 'edit → ring with full :sel-ctx (for ;)
-         ▼
-   . → helixel-repeat-edit()
-         → helixel--recreate-selection(sel-ctx)  ← unified dispatcher
-         → execute operator
+selection cmd → helixel--repeat-sel-ctx
+  ↓
+edit cmd → helixel--record-edit(op, &rest payload)
+  ↓
+helixel-edit-make(op, sel-ctx, payload) → tx (:op :sel :payload :marker)
+  ↓
+helixel--last-tx = tx              (dot-repeat consumer)
+helixel--live-edit-set(tx)         (action ring — ; jumping consumer)
+  ↓
+. → helixel-repeat-edit()
+  → helixel--recreate-selection(edit-sel tx)
+  → helixel--execute-edit(tx)      (unified dispatcher)
 ```
 
 ## Future Work
 
 ### Priority 1 — Count prefix support
 **Problem**: `3 x d` (select 3 lines, delete) doesn't store count.
-Most helixel commands don't consume `current-prefix-arg`.
 **Approach**: Add `:count` to `sel-ctx` plist.
 
 ### Priority 2 — `C-u .` edit history browsing
-**Approach**: Reuse action ring + `C-u n` pattern to select from edit history.
+**Approach**: Reuse action ring + `helixel-edit-display` for completing-read.
 
 ### Lower Priority
 - **Undo repeat**: `.` after `u`/`U` — debatable value
-- **Cross-buffer repeat**: last-edit is buffer-local
-
-## Fixes (2026-05-07)
-
-### Bug fix — `a` missing insert-text record
-`helixel-insert-after` was missing `record-edit 'insert-text` and
-`change-track-marker`. All other insert-entry commands had both.
-Fixed, with an invariant test.
-
-### Schema unification — `helixel--live-edit-set` takes `sel-ctx`
-Changed from `(operator sel-type sel-fn &rest extra)` to
-`(operator sel-ctx &rest extra)`. The action ring now stores the
-full `:sel-ctx` plist instead of splitting `:sel-type`/`:sel-fn`.
-This aligns the action layer with the repeat layer's data model.
-
-### Invariant tests added
-- `record-edit` consumes `helixel--repeat-sel-ctx`
-- `.` does not pollute the action ring beyond what `record-edit` added
+- **Cross-buffer repeat**: last-tx is buffer-local
 - `helixel-insert-after` records `insert-text`

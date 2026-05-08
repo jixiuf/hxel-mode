@@ -722,4 +722,77 @@ Repeat-specific tests:
   change-textobj, preserves-last-edit, clear-data, copy
 - Insert-text, empty insert-text
 - Movement-kill, movement-change
+- 3 invariant tests: sel-ctx consumed, . no-pollute ring, insert-after records
+
+---
+
+## 16. Phase G — Transaction-Driven Architecture (2026-05-07)
+
+> **Goal**: Converge the action / selection / edit / repeat subsystems into a
+> unified editing transaction model. Single schema consumed by repeat, action
+> ring, and edit commands.
+
+### 16.1. New Kernel Module: `helixel-edit.el`
+
+Unified transaction schema — no helixel dependencies, pure data model:
+
+```elisp
+;; Transaction plist:
+(:op     symbol    ;; kill|change|copy|replace|replace-char|...
+ :sel    plist|nil ;; selection context
+ :payload plist    ;; operator-specific data
+ :marker marker)   ;; start position for ; jumping
+
+;; Core API (no side effects):
+(helixel-edit-make op sel-ctx &rest payload-kv)  → tx
+(helixel-edit-op tx)       ;; :op accessor
+(helixel-edit-sel tx)      ;; :sel accessor
+(helixel-edit-payload tx)  ;; :payload accessor
+(helixel-edit-equal-p a b) ;; equality (ignores :marker, handles nil)
+(helixel-edit-display tx)  ;; display string for action ring
+```
+
+### 16.2. Repeat → Transaction (Phase 2)
+
+- `helixel--last-edit` replaced by `helixel--last-tx`
+- `helixel--record-edit` builds tx via `helixel-edit-make`
+- `helixel-repeat-edit` reads tx via accessors instead of raw plist-get
+- `helixel--repeat-change-core` reads payload via `helixel-edit-payload`
+- `helixel-insert-exit` patches tx payload instead of flat plist
+- `:replace-char` kwarg renamed to `:char`; `:change-text` → `:inserted-text`/`:text`
+- Tests: all plist constructions updated from `(:operator :sel-ctx :change-text)`
+  to `(:op :sel :payload ...)`
+
+### 16.3. Action Ring → Transaction (Phase 3)
+
+- `helixel--live-edit-set` takes `(tx)` instead of `(operator sel-ctx &rest extra)`
+- Action ring `:edit` sub-plist is now a full transaction `(:op :sel :payload :marker)`
+- Same schema as `helixel--last-tx` — single source of truth
+- `helixel-action-display` delegates to `helixel-edit-display`
+- `helixel-action--same-content-p` delegates to `helixel-edit-equal-p`
+- `helixel-edit-equal-p` fixed to return t when both args are nil (non-edit action dedup)
+
+### 16.4. Execution Dispatcher (Phase 4)
+
+- `helixel--execute-edit(tx)` maps `:op` → execution function via pcase
+- `helixel-repeat-edit` simplified: read tx → recreate-selection → execute-edit
+- All operator dispatch logic lives in one function, not scattered in repeat-edit
+
+### 16.5. Dependency Graph (Final)
+
+```
+helixel-edit.el       kernel (no helixel deps)
+   ↓
+helixel-action.el     ring + ;  (requires helixel-edit)
+   ↓
+helixel-repeat.el     . infrastructure (requires helixel-action + edit)
+   ↓
+helixel-common.el     state machine + editing (requires all above)
+```
+
+One-way chain, no circular dependencies. All modules load-time safe.
+
+### 16.6. Tests (254 total)
+
+All 254 tests pass after each phase. No new test failures introduced.
 
