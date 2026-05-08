@@ -226,3 +226,34 @@ like `github.com/foo/bar`):
 `mi p` now selects the inner Go package path at point;
 `ma p` selects it plus surrounding whitespace.
 
+### Tree-sitter Text Objects
+
+Requires [evil-textobj-tree-sitter](https://github.com/meain/evil-textobj-tree-sitter)
+as a soft dependency.  If installed, you can define syntax-aware text objects
+(function, class, loop, conditional, parameter, comment, etc.):
+
+```elisp
+(define-key helixel-textobj-inner-map "f"
+  (helixel-get-tree-sitter-textobj "function.inner"))
+(define-key helixel-textobj-outer-map "f"
+  (helixel-get-tree-sitter-textobj "function.outer"))
+(define-key helixel-textobj-inner-map "a"
+  (helixel-get-tree-sitter-textobj "parameter.inner"))
+(define-key helixel-textobj-outer-map "a"
+  (helixel-get-tree-sitter-textobj "parameter.outer"))
+```
+
+If `evil-textobj-tree-sitter` is not installed, the function returns nil
+and the bindings are silently ignored.
+
+You can also pass a custom query alist mapping major-modes to tree-sitter
+queries for user-defined text objects:
+
+```elisp
+(define-key helixel-textobj-outer-map "m"
+  (helixel-get-tree-sitter-textobj "import"
+    '((python-mode . "((import_statement) @import)")
+      (python-ts-mode . "((import_statement) @import)")
+      (rust-mode . "((use_declaration) @import)"))))
+```
+

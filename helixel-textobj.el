@@ -28,6 +28,12 @@
 (require 'cl-lib)
 (require 'thingatpt)
 
+(declare-function evil-textobj-tree-sitter--range
+              "evil-textobj-tree-sitter-core" t t)
+(declare-function evil-textobj-tree-sitter--message-not-found
+              "evil-textobj-tree-sitter-core" t t)
+(defvar evil-textobj-tree-sitter-use-next-if-not-within)
+
 (defvar helixel-textobj-action-function nil
   "If non-nil, called with (CATEGORY SUBCAT) on textobj action start.")
 
@@ -1842,6 +1848,41 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
              (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
        (define-key helixel-textobj-inner-map ,key #',inner-name)
        (define-key helixel-textobj-outer-map ,key #',outer-name))))
+
+(defun helixel-get-tree-sitter-textobj (group &optional query)
+  "Return a command for a tree-sitter text object of GROUP.
+
+GROUP is a string like \"function.inner\" or a list thereof.
+If multiple groups are passed, the first available one is used.
+QUERY is an optional alist mapping major-mode to custom query strings.
+
+The returned command can be bound in `helixel-textobj-inner-map'
+or `helixel-textobj-outer-map'.
+Requires `evil-textobj-tree-sitter' to be installed.
+
+Example:
+  (define-key helixel-textobj-inner-map \"f\"
+    (helixel-textobj-tree-sitter-get-textobj \"function.inner\"))
+  (define-key helixel-textobj-outer-map \"f\"
+    (helixel-textobj-tree-sitter-get-textobj \"function.outer\"))"
+  (when (or (featurep 'evil-textobj-tree-sitter-core)
+            (require 'evil-textobj-tree-sitter-core nil t))
+    (let* ((groups (if (listp group) group (list group)))
+         (interned-groups (mapcar #'intern groups)))
+    (lambda (&optional count)
+      (interactive "p")
+      (when helixel-textobj-action-function
+        (funcall helixel-textobj-action-function 'textobj 'treesit))
+      (let ((range (evil-textobj-tree-sitter--range
+                    count interned-groups query)))
+        (if range
+            (progn
+              (push-mark (car range) nil t)
+              (goto-char (cdr range))
+              (setq helixel--selection-type 'textobj)
+              (setq helixel--repeat-sel-ctx
+                    (list :fn this-command :kind 'textobj)))
+          (evil-textobj-tree-sitter--message-not-found groups)))))))
 
 (helixel-define-mark-object "word" 'helixel-word "word" 'word t)
 (helixel-define-mark-object "WORD" 'helixel-WORD "WORD" 'WORD t)
