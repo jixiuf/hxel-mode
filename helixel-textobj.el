@@ -1566,29 +1566,6 @@ RESTRICTED-P non-nil means use restricted version (for word/WORD)."
                  (setq helixel--selection-type 'textobj)
                  (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj))))))))))
 
-(helixel-define-mark-object "word" 'helixel-word "word" 'word t)
-(helixel-define-mark-object "WORD" 'helixel-WORD "WORD" 'WORD t)
-(helixel-define-mark-object "symbol" 'helixel-symbol "symbol" 'symbol)
-(helixel-define-mark-object "sentence" 'helixel-sentence "sentence" 'sentence)
-(helixel-define-mark-object "paragraph" 'helixel-paragraph
-                            "paragraph" 'paragraph)
-
-(helixel-define-mark-pair "paren" ?\( ?\) "parenthesis" t)
-(helixel-define-mark-pair "paren" ?\( ?\) "parenthesis" nil)
-(helixel-define-mark-pair "bracket" ?\[ ?\] "bracket" t)
-(helixel-define-mark-pair "bracket" ?\[ ?\] "bracket" nil)
-(helixel-define-mark-pair "brace" ?\{ ?\} "brace" t)
-(helixel-define-mark-pair "brace" ?\{ ?\} "brace" nil)
-(helixel-define-mark-pair "angle" ?\< ?\> "angle" t)
-(helixel-define-mark-pair "angle" ?\< ?\> "angle" nil)
-
-
-(helixel-define-mark-quote "single-quote" ?' "single-quoted string" t)
-(helixel-define-mark-quote "single-quote" ?' "single-quoted string" nil)
-(helixel-define-mark-quote "double-quote" ?\" "double-quoted string" t)
-(helixel-define-mark-quote "double-quote" ?\" "double-quoted string" nil)
-(helixel-define-mark-quote "back-quote" ?` "back-quoted string" t)
-(helixel-define-mark-quote "back-quote" ?` "back-quoted string" nil)
 
 ;; ============================================================================
 ;; tag Text Objects
@@ -1866,6 +1843,29 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
        (define-key helixel-textobj-inner-map ,key #',inner-name)
        (define-key helixel-textobj-outer-map ,key #',outer-name))))
 
+(helixel-define-mark-object "word" 'helixel-word "word" 'word t)
+(helixel-define-mark-object "WORD" 'helixel-WORD "WORD" 'WORD t)
+(helixel-define-mark-object "symbol" 'helixel-symbol "symbol" 'symbol)
+(helixel-define-mark-object "sentence" 'helixel-sentence "sentence" 'sentence)
+(helixel-define-mark-object "paragraph" 'helixel-paragraph
+                            "paragraph" 'paragraph)
+
+(helixel-define-mark-pair "paren" ?\( ?\) "parenthesis" t)
+(helixel-define-mark-pair "paren" ?\( ?\) "parenthesis" nil)
+(helixel-define-mark-pair "bracket" ?\[ ?\] "bracket" t)
+(helixel-define-mark-pair "bracket" ?\[ ?\] "bracket" nil)
+(helixel-define-mark-pair "brace" ?\{ ?\} "brace" t)
+(helixel-define-mark-pair "brace" ?\{ ?\} "brace" nil)
+(helixel-define-mark-pair "angle" ?\< ?\> "angle" t)
+(helixel-define-mark-pair "angle" ?\< ?\> "angle" nil)
+
+
+(helixel-define-mark-quote "single-quote" ?' "single-quoted string" t)
+(helixel-define-mark-quote "single-quote" ?' "single-quoted string" nil)
+(helixel-define-mark-quote "double-quote" ?\" "double-quoted string" t)
+(helixel-define-mark-quote "double-quote" ?\" "double-quoted string" nil)
+(helixel-define-mark-quote "back-quote" ?` "back-quoted string" t)
+(helixel-define-mark-quote "back-quote" ?` "back-quoted string" nil)
 ;; ============================================================================
 ;; Keymaps
 ;; ============================================================================
