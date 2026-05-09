@@ -29,6 +29,8 @@ Requires Emacs >= 29.1.
 | `W` `B` `E` | WORD forward / back / end |
 | `f` `t` `F` `T` | Find char |
 | `m i` `m a` | Text objects (word, symbol, sentence, paragraph, pairs, quotes, tags) |
+| `m s` `m t` | Surround add / add tag |
+| `m d` `m r` | Surround delete / replace |
 | `;` | Set mark to previous session start |
 | `M-.` | Repeat last find-char |
 | `n` `N` | Repeat / reverse direction repeat (`C-u n` pick from history) |
@@ -71,6 +73,61 @@ region** instead of what is at point.  This means:
 
 White space adjustment: cursor on whitespace between words automatically
 finds the adjacent word.
+
+### Surround
+
+`m s` (surround-add) and `m t` (surround-add-tag) wrap the active
+selection with delimiter pairs.  `m d` (delete) removes surrounding
+delimiters.  `m r` (replace) replaces them with new ones.
+
+`m s` reads a character and looks it up first in
+`helixel-surround-block-alist` (per-mode string pairs like
+`#+begin_src`/`#+end_src`), then in `helixel--surround-pairs` (char
+pairs like `()` `[]` `{}` `<>` and quotes).
+
+`m t` reads a tag name string and wraps the selection in XML tags.
+
+`m d` and `m r` read delimiter info from the previous text object
+selection (mi / ma), so no extra input is needed — just select a text
+object then press `m d` or `m r`.
+
+| Key | Selection type | Behavior |
+|-----|---------------|----------|
+| `m s` `(` | Active region | Wrap region in `( )` |
+| `m s` `[` | Active region | Wrap region in `[ ]` |
+| `m s` `{` | Active region | Wrap region in `{ }` |
+| `m s` `<` | Active region | Wrap region in `< >` |
+| `m s` `'` | Active region | Wrap region in `' '` |
+| `m s` `"` | Active region | Wrap region in `" "` |
+| `m s` `` ` `` | Active region | Wrap region in `` ` `` |
+| `m s` `s` | Active region (org) | Wrap in `#+begin_src` / `#+end_src` |
+| `m s` `e` | Active region (org) | Wrap in `#+begin_example` / `#+end_example` |
+| `m s` `q` | Active region (org) | Wrap in `#+begin_quote` / `#+end_quote` |
+| `m s` `` ` `` | Active region (markdown) | Wrap in `` ``` `` / `` ``` `` |
+| `m t` | Active region | Wrap in `<tag>` / `</tag>` |
+| `m d` | After mi/ma | Delete surrounding delimiters |
+| `m r` | After mi/ma | Replace surrounding delimiters |
+
+After `m s` or `m r`, the new region (including delimiters) stays
+selected so you can chain `m d` or `m r` immediately.
+
+#### Custom Block Pairs
+
+Add major-mode-specific block surround pairs via
+`helixel-surround-block-alist`:
+
+```elisp
+(setq helixel-surround-block-alist
+      '((org-mode
+         (?s . ("#+begin_src " . "#+end_src"))
+         (?e . ("#+begin_example " . "#+end_example"))
+         (?q . ("#+begin_quote " . "#+end_quote")))
+        (markdown-mode
+         (?\` . ("```" . "```")))))
+```
+
+The first element of each entry is the key character pressed after
+`m s`.  The second is `(OPEN-STRING . CLOSE-STRING)`.
 
 ### Search & Repeat
 

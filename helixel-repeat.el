@@ -38,6 +38,7 @@
 
 (require 'helixel-action)
 (require 'helixel-edit)
+(require 'helixel-delimiter)
 
 ;; ---------------------------------------------------------------------------
 ;; Selection Context (helixel--repeat-sel-ctx)
@@ -133,6 +134,15 @@ Dispatches on :kind to use the appropriate replay strategy."
 (declare-function helixel--rect-change "helixel-common")
 (declare-function helixel-insert-exit "helixel-common")
 (declare-function helixel--delete-selection "helixel-common")
+(declare-function helixel--surround-add "helixel-surround" (open close))
+(declare-function helixel--surround-add-tag "helixel-surround" (tag-name))
+(declare-function helixel--surround-delete "helixel-surround" (d))
+(declare-function helixel--surround-replace-pair "helixel-surround"
+                  (d new-open new-close))
+(declare-function helixel--surround-replace-tag "helixel-surround"
+                  (new-tag-name))
+(declare-function helixel--surround-lookup "helixel-surround" (char))
+(declare-function helixel--surround-delete-delimiter "helixel-surround" (d))
 
 (defun helixel--repeat-change-core ()
   "Repeat change: kill selection, insert stored :inserted-text from payload."
@@ -163,7 +173,33 @@ Maps :op to the appropriate execution function."
       ('indent-left (helixel-indent-left))
       ('indent-right (helixel-indent-right))
       ('change (helixel--repeat-change-core))
-      ('insert-text (insert (or (plist-get payload :text) ""))))))
+      ('insert-text (insert (or (plist-get payload :text) "")))
+      ('surround-add
+       (when-let ((char (plist-get payload :char))
+                  (pair (helixel--surround-lookup char)))
+         (helixel--surround-add (car pair) (cdr pair))))
+      ('surround-add-tag
+       (helixel--surround-add-tag (plist-get payload :tag)))
+      ('surround-delete
+       (when-let ((d (plist-get (helixel-edit-sel tx) :delimiter)))
+         (goto-char (helixel--surround-delete-delimiter d))))
+      ('surround-replace
+       (let* ((sel-ctx (helixel-edit-sel tx))
+              (d (plist-get sel-ctx :delimiter))
+              (type (helixel-delimiter-type d))
+              (new-char (plist-get payload :new-char))
+              (tag (plist-get payload :tag)))
+         (when d
+           (pcase type
+             ('tag
+              (when tag
+                (helixel--surround-replace-tag tag d)))
+             (_
+              (when new-char
+                (let ((pair (helixel--surround-lookup new-char)))
+                  (when pair
+                    (helixel--surround-delete-delimiter d)
+                    (helixel--surround-add (car pair) (cdr pair)))))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Replay (bound to `.`)

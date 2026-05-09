@@ -27,6 +27,11 @@
 
 (require 'cl-lib)
 (require 'thingatpt)
+(require 'helixel-delimiter)
+
+(defvar helixel--surround-pairs nil
+  "Alist mapping a delimiter char to (open . close) for surround.
+Auto-populated by `helixel-define-mark-pair' and `helixel-define-mark-quote'.")
 
 (declare-function evil-textobj-tree-sitter--range
               "evil-textobj-tree-sitter-core" t t)
@@ -736,6 +741,18 @@ are the delimiters of a string or comment."
                    (<= (car op-end) beg)      ; second contains orig
                    (>= (cdr cl-end) end)))
           (setq op op-end cl cl-end)))
+        ;; Validate that op/cl form a matched pair. Scan 1 can produce
+        ;; mismatched tags (e.g., <div> with </p>) when point is between
+        ;; the inner closing tag and the outer closing tag.
+        ;; If mismatched, prefer scan 2 if it forms a valid pair.
+        (when (and op cl op-end cl-end)
+          (let ((op-tag (helixel--xml-tag-name op))
+                (cl-tag (helixel--xml-tag-name cl)))
+            (unless (string= op-tag cl-tag)
+              (let ((op2-tag (helixel--xml-tag-name op-end))
+                    (cl2-tag (helixel--xml-tag-name cl-end)))
+                (when (string= op2-tag cl2-tag)
+                  (setq op op-end cl cl-end))))))
         (setq op-end op cl-end cl) ; store copy
         ;; if the current selection contains the surrounding
         ;; delimiters, they do not count as new selection
@@ -936,6 +953,7 @@ backwards."
     (with-syntax-table (copy-syntax-table (syntax-table))
       (unless (= (char-syntax quote) ?\")
         (modify-syntax-entry quote "\"")
+        (syntax-ppss-flush-cache (point-min))
         (setq reset-parser t))
       ;; global parser state is out of state, use local one
       (let* ((pnt (point))
@@ -1003,7 +1021,21 @@ The quotation character is specified by the global variable
 `helixel-forward-quote-char'.  This character is passed to
 `helixel-forward-quote'."
   (helixel-forward-quote helixel-forward-quote-char count))
+(defvar helixel--bounds-quote-char nil
+  "Quote character for `helixel--bounds-of-quote-at-point'.")
+
+(defun helixel--bounds-of-quote-at-point ()
+  "Return bounds of quoted string at point using `helixel--bounds-quote-char'.
+Temporarily sets the quote character's syntax to string-quote."
+  (when helixel--bounds-quote-char
+    (with-syntax-table (copy-syntax-table (syntax-table))
+      (unless (= (char-syntax helixel--bounds-quote-char) ?\")
+        (modify-syntax-entry helixel--bounds-quote-char "\""))
+      (syntax-ppss-flush-cache (point-min))
+      (helixel--bounds-of-string-at-point))))
 (put 'helixel-quote 'forward-op #'helixel--forward-quote)
+(put 'helixel-quote 'bounds-of-thing-at-point
+     #'helixel--bounds-of-quote-at-point)
 
 (defun helixel-select-quote-thing
     (thing beg end _type count &optional inclusive)
@@ -1119,7 +1151,8 @@ preceeding (or following) whitespace is added to the range."
                               beg end type
                               count
                               inclusive)))))
-        (let ((helixel-forward-quote-char quote))
+        (let ((helixel-forward-quote-char quote)
+              (helixel--bounds-quote-char quote))
           (helixel-select-quote-thing 'helixel-quote
                                       beg end type
                                       count
@@ -1144,6 +1177,17 @@ preceeding (or following) whitespace is added to the range."
           (end (helixel-normalize-position (nth 1 range))))
       (min beg end))))
 
+(defun helixel--activate-textobj-range (range &optional delimiter)
+  "Activate RANGE as a textobj selection with optional DELIMITER.
+RANGE may be a cons (BEG . END) or a list (BEG END ...)."
+  (when range
+    (push-mark (car range) nil t)
+    (goto-char (if (consp (cdr range)) (cadr range) (cdr range)))
+    (setq helixel--selection-type 'textobj
+          helixel--repeat-sel-ctx
+          (list :fn this-command :kind 'textobj
+                :delimiter delimiter))))
+
 
 (defun helixel-select-xml-tag (beg end type &optional count inclusive)
   "Return a range (BEG END) of COUNT matching XML tags.
@@ -1159,6 +1203,14 @@ themselves are included from the range."
         rng)))
    (t
     (helixel-select-block #'helixel-up-xml-tag beg end type count inclusive))))
+
+(defun helixel--xml-tag-name (bounds)
+  "Extract XML tag name from tag BOUNDS (BEG . END).
+Returns the tag name without <, </, or >."
+  (let ((str (buffer-substring (car bounds) (cdr bounds))))
+    (if (string-match "\\`<\\(/\\)?\\([^ >\n]+\\)" str)
+        (match-string 2 str)
+      "")))
 
 (defun helixel-up-xml-tag (&optional count)
   "Move point to the end or beginning of balanced xml tags.
@@ -1194,15 +1246,17 @@ match (that caused COUNT to reach zero)."
                    ;; tags.  If the current tag is a free opener
                    ;; without matching closing tag, the subsequent
                    ;; test will make us ignore this tag
-                   (pop tags))
-                  ((and (> dir 0))
+                    (pop tags)
+                    tags)
+                   ((and (> dir 0))
                    ;; non matching openers are considered free openers
                    (while (and tags
                                (not (string= (car tags)
                                              (match-string cl))))
-                     (pop tags))
-                   (pop tags)))))
-        (unless (setq match (and match (match-data t)))
+                      (pop tags))
+                     (pop tags)
+                     tags))))
+         (unless (setq match (and match (match-data t)))
           (setq match nil)
           (throw 'done count))
         ;; found closing tag, look for corresponding opening tag
@@ -1382,7 +1436,7 @@ COUNT specifies the number of levels to traverse."
                   (unless (zerop remaining)
                     (goto-char (if (> dir 0)
                                    (match-end 0)
-                                 (match-beginning 0))))))
+                                 (match-beginning 0)))))
               (goto-char (if (> dir 0) (point-max) (point-min)))
               (setq remaining 0)))
           (if match
@@ -1414,7 +1468,7 @@ COUNT specifies the number of levels to traverse."
               (goto-char (if (> dir 0) (match-end 0) (match-beginning 0))))))
         (if (and match (zerop remaining))
             (progn (set-match-data (list (match-beginning 0) (match-end 0))) 0)
-          (* dir (if match remaining 1))))))
+          (* dir (if match remaining 1)))))))
 
 (defun helixel-select-regex-block (begin-re end-re beg end type count
                                              &optional inclusive name-group)
@@ -1488,8 +1542,13 @@ pair.  INNER-P non-nil means inner, nil means a."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx
-                   (list :fn this-command :kind 'textobj))))))))
+              (setq helixel--repeat-sel-ctx
+                    (list :fn this-command :kind 'textobj
+                          :delimiter (helixel--make-pair-delimiter
+                                      ,open ,close))))))
+       ,@(unless inner-p
+           `((push (cons ,open ,close) helixel--surround-pairs)
+             (push (cons ,close ,open) helixel--surround-pairs))))))
 
 (defmacro helixel-define-mark-quote (name quote-char doc inner-p)
   "Define mark inner/a functions for a quote character.
@@ -1519,8 +1578,12 @@ INNER-P non-nil means inner, nil means a."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx
-                   (list :fn this-command :kind 'textobj))))))))
+              (setq helixel--repeat-sel-ctx
+                    (list :fn this-command :kind 'textobj
+                          :delimiter (helixel--make-pair-delimiter
+                                      ,quote-char ,quote-char))))))
+       ,@(unless inner-p
+           `((push (cons ,quote-char ,quote-char) helixel--surround-pairs))))))
  
 (defmacro helixel-define-mark-object
     (name thing doc subcat &optional restricted-p)
@@ -1602,7 +1665,9 @@ COUNT is the number of tags to select."
       (push-mark (car range) nil t)
       (goto-char (cadr range))
       (setq helixel--selection-type 'textobj)
-      (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
+      (setq helixel--repeat-sel-ctx
+            (list :fn this-command :kind 'textobj
+                  :delimiter (helixel--make-tag-delimiter))))))
 (defun helixel-mark-a-tag (&optional count)
   "Select a tag.
 COUNT is the number of tags to select."
@@ -1617,7 +1682,9 @@ COUNT is the number of tags to select."
       (push-mark (car range) nil t)
       (goto-char (cadr range))
       (setq helixel--selection-type 'textobj)
-      (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
+      (setq helixel--repeat-sel-ctx
+            (list :fn this-command :kind 'textobj
+                  :delimiter (helixel--make-tag-delimiter))))))
 
 ;; ============================================================================
 ;; Generic Block Text Objects (org blocks, markdown fences, etc.)
@@ -1626,7 +1693,9 @@ COUNT is the number of tags to select."
 (defvar-local helixel--block-chosen-spec nil
   "The block spec chosen by `helixel-up-block-at-point'.
 Set during `helixel-select-block-at-point' to keep the pattern
-consistent between the +1/-1 calls made by `helixel-select-block'.")
+consistent between the +1/-1 calls made by `helixel-select-block'.
+Cleared by `helixel-select-block-at-point' on exit, and by
+`helixel-delimiter-bounds' for surround operations.")
 
 (defcustom helixel-block-textobj-alist
   '((org-mode . ("^#\\+begin_\\([^ \n\r]+\\)[^\n]*"
@@ -1796,7 +1865,9 @@ COUNT is the number of blocks to select."
       (push-mark (car range) nil t)
       (goto-char (cadr range))
       (setq helixel--selection-type 'textobj)
-      (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
+      (setq helixel--repeat-sel-ctx
+            (list :fn this-command :kind 'textobj
+                  :delimiter (helixel--make-block-delimiter))))))
 
 (defun helixel-mark-a-block (&optional count)
   "Select a block (org block, markdown fence, etc.).
@@ -1812,7 +1883,9 @@ COUNT is the number of blocks to select."
       (push-mark (car range) nil t)
       (goto-char (cadr range))
       (setq helixel--selection-type 'textobj)
-      (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
+      (setq helixel--repeat-sel-ctx
+            (list :fn this-command :kind 'textobj
+                  :delimiter (helixel--make-block-delimiter))))))
 
 (defmacro helixel-define-regex-textobj (key name begin-re end-re
                                             &optional name-group
@@ -1829,7 +1902,8 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
         (outer-name (intern (format "helixel-mark-a-%s" name)))
         (inner-doc (format "Select inner %s." name))
         (outer-doc (format "Select a %s." name))
-        (cat (or subcat 'block)))
+        (cat (or subcat 'block))
+        (delimiter (helixel--make-regex-delimiter begin-re end-re name-group)))
     `(progn
        (defun ,inner-name (&optional count)
          ,inner-doc
@@ -1846,7 +1920,8 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
              (setq helixel--repeat-sel-ctx
-                   (list :fn this-command :kind 'textobj)))))
+                   (list :fn this-command :kind 'textobj
+                         :delimiter ,delimiter)))))
        (defun ,outer-name (&optional count)
          ,outer-doc
          (interactive "p")
@@ -1862,7 +1937,8 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
              (setq helixel--repeat-sel-ctx
-                   (list :fn this-command :kind 'textobj)))))
+                   (list :fn this-command :kind 'textobj
+                         :delimiter ,delimiter)))))
        (define-key helixel-textobj-inner-map ,key #',inner-name)
        (define-key helixel-textobj-outer-map ,key #',outer-name))))
 

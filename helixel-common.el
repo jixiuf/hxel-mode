@@ -38,6 +38,11 @@
 (require 'helixel-textobj)
 (require 'helixel-repeat)
 
+(declare-function helixel-surround-add "helixel-surround")
+(declare-function helixel-surround-add-tag "helixel-surround")
+(declare-function helixel-surround-delete "helixel-surround")
+(declare-function helixel-surround-replace "helixel-surround")
+
 
 (defcustom helixel-major-mode-default-states '((calc-mode . insert))
   "Alist mapping major modes to default Helixel states.
@@ -968,6 +973,10 @@ Example with multiple callbacks:
     (set-keymap-parent helixel-textobj-map helixel-textobj-inner-map)
     (define-key helixel-textobj-map "i" helixel-textobj-inner-map)
     (define-key helixel-textobj-map "a" helixel-textobj-outer-map)
+    (define-key helixel-textobj-map "s" #'helixel-surround-add)
+    (define-key helixel-textobj-map "t" #'helixel-surround-add-tag)
+    (define-key helixel-textobj-map "d" #'helixel-surround-delete)
+    (define-key helixel-textobj-map "r" #'helixel-surround-replace)
     (define-key keymap (kbd "m") 'helixel-textobj-map)
 
     ;; Goto mode

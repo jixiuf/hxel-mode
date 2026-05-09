@@ -34,7 +34,9 @@
 (require 'helixel-action)
 (require 'helixel-common)
 (require 'helixel-search)
+(require 'helixel-delimiter)
 (require 'helixel-textobj)
+(require 'helixel-surround)
 
 (provide 'helixel)
 ;;; helixel.el ends here

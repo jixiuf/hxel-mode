@@ -124,6 +124,8 @@ e.g. \"d.textobj\", \"c.line\", \"p\", \"R\", \"<\"."
                    (replace "r") (paste-after "p") (paste-before "P")
                    (indent-left "<") (indent-right ">")
                    (replace-char "R") (insert-text "i")
+                   (surround-add "ms") (surround-add-tag "mt")
+                   (surround-delete "md") (surround-replace "mr")
                    (t (symbol-name op))))
          (sel-kind (plist-get sel :kind)))
     (if sel-kind
@@ -142,7 +144,8 @@ e.g. \"d.textobj\", \"c.line\", \"p\", \"R\", \"<\"."
 
 (defvar helixel-edit-operator-names
   '(kill change copy replace replace-char
-    paste-after paste-before indent-left indent-right insert-text)
+    paste-after paste-before indent-left indent-right insert-text
+    surround-add surround-add-tag surround-delete surround-replace)
   "All known edit operators.")
 
 (defun helixel-edit-operator-p (op)

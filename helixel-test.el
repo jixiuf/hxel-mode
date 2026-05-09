@@ -3053,4 +3053,520 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (should helixel--change-track-marker)
     (set-marker helixel--change-track-marker nil)
     (setq helixel--change-track-marker nil)))
+
+;; ============================================================================
+;; Surround tests
+;; ============================================================================
+
+(ert-deftest helixel-test-surround-add-paren ()
+  "Test `helixel--surround-add' with (pair."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add ?\( ?\))
+    (should (equal (buffer-string) "(hello)"))
+    (should (region-active-p))
+    (should (= (region-beginning) 1))
+    (should (= (region-end) 8))))
+
+(ert-deftest helixel-test-surround-add-bracket ()
+  "Test `helixel--surround-add' with [pair."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add ?\[ ?\])
+    (should (equal (buffer-string) "[hello]"))
+    (should (= (region-beginning) 1))
+    (should (= (region-end) 8))))
+
+(ert-deftest helixel-test-surround-add-quote ()
+  "Test `helixel--surround-add' with 'pair."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add ?\' ?\')
+    (should (equal (buffer-string) "'hello'"))
+    (should (region-active-p))))
+
+(ert-deftest helixel-test-surround-add-block ()
+  "Test `helixel--surround-add' with string block pair."
+  (with-temp-buffer
+    (org-mode)
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add "#+begin_quote " "#+end_quote")
+    (should (string-match "\\`#\\+begin_quote .*\nhello\n#\\+end_quote\\'" (buffer-string)))))
+
+(ert-deftest helixel-test-surround-add-tag ()
+  "Test `helixel--surround-add-tag'."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add-tag "div")
+    (should (equal (buffer-string) "<div>\nhello\n</div>"))))
+
+(ert-deftest helixel-test-surround-add-tag-inline ()
+  "Test `helixel--surround-add-tag' on content with leading newline.
+The leading newline is part of content so mt adds newline only before close."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "\nhello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 7) (activate-mark)
+    (helixel--surround-add-tag "b")
+    (should (equal (buffer-string) "<b>\nhello\n</b>"))))
+
+(ert-deftest helixel-test-surround-delete-pair-inner ()
+  "Test delete surrounding () when point is inside (mi()."
+  (with-temp-buffer
+    (insert "(hello)")
+    (goto-char 4)
+    (helixel--surround-delete-delimiter (helixel--make-pair-delimiter ?\( ?\)))
+    (should (equal (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-surround-delete-pair-outer ()
+  "Test delete surrounding () when point is after the close (ma()."
+  (with-temp-buffer
+    (insert "(hello)")
+    (goto-char 7)
+    (helixel--surround-delete-delimiter (helixel--make-pair-delimiter ?\( ?\)))
+    (should (equal (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-surround-delete-quote ()
+  "Test delete surrounding '' when point is inside."
+  (with-temp-buffer
+    (insert "'hello'")
+    (goto-char 4)
+    (helixel--surround-delete-delimiter (helixel--make-pair-delimiter ?\' ?\'))
+    (should (equal (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-surround-delete-quote-outer ()
+  "Test delete surrounding \"\" when point is after the close (ma\")."
+  (with-temp-buffer
+    (insert "\"hello\"")
+    (goto-char 8)
+    (helixel--surround-delete-delimiter (helixel--make-pair-delimiter ?\" ?\"))
+    (should (equal (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-surround-delete-tag ()
+  "Test delete surrounding XML tags."
+  (with-temp-buffer
+    (insert "<div>hello</div>")
+    (goto-char 8)
+    (helixel--surround-delete-delimiter (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-surround-delete-tag-with-newlines ()
+  "Test delete surrounding XML tags with newlines."
+  (with-temp-buffer
+    (insert "<div>\nhello\n</div>")
+    (goto-char 9)
+    (helixel--surround-delete-delimiter (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-surround-replace-pair ()
+  "Test replace () with []."
+  (with-temp-buffer
+    (insert "(hello)")
+    (goto-char 4)
+    (helixel--surround-replace-pair (helixel--make-pair-delimiter ?\( ?\)) ?\[ ?\])
+    (should (equal (buffer-string) "[hello]"))))
+
+(ert-deftest helixel-test-surround-replace-quote ()
+  "Test replace '' with \"\"."
+  (with-temp-buffer
+    (insert "'hello'")
+    (goto-char 4)
+    (helixel--surround-replace-pair (helixel--make-pair-delimiter ?\' ?\') ?\" ?\")
+    (should (equal (buffer-string) "\"hello\""))))
+
+(ert-deftest helixel-test-surround-replace-tag ()
+  "Test replace tag div -> p."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add-tag "div")
+    (helixel--surround-replace-tag "p" (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "<p>\nhello\n</p>"))))
+
+(ert-deftest helixel-test-surround-replace-equal-repeated ()
+  "Test repeated mr does not accumulate newlines."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add-tag "div")
+    (helixel--surround-replace-tag "p" (helixel--make-tag-delimiter))
+    (helixel--surround-replace-tag "span" (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "<span>\nhello\n</span>"))))
+
+(ert-deftest helixel-test-surround-chain-ms-md ()
+  "Chain ms( then md."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add ?\( ?\))
+    (let ((d (helixel--make-pair-delimiter ?\( ?\))))
+      (let ((pos (helixel--surround-delete-delimiter d)))
+        (goto-char pos)
+        (should (equal (buffer-string) "hello"))))))
+
+(ert-deftest helixel-test-surround-chain-ms-mr-md ()
+  "Chain ms[ then mr{ then md."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add ?\[ ?\])
+    (helixel--surround-replace-pair (helixel--make-pair-delimiter ?\[ ?\]) ?\{ ?\})
+    (let ((d (helixel--make-pair-delimiter ?\{ ?\})))
+      (let ((pos (helixel--surround-delete-delimiter d)))
+        (goto-char pos)
+        (should (equal (buffer-string) "hello"))))))
+
+(ert-deftest helixel-test-surround-chain-mt-mr-md ()
+  "Chain mt div -> mr p -> md."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add-tag "div")
+    (helixel--surround-replace-tag "p" (helixel--make-tag-delimiter))
+    (let ((d (helixel--make-tag-delimiter)))
+      (let ((pos (helixel--surround-delete-delimiter d)))
+        (goto-char pos)
+        (should (equal (buffer-string) "hello"))))))
+
+(ert-deftest helixel-test-surround-replace-trailing-newline ()
+  "Test replace () with [] when content has trailing newline."
+  (with-temp-buffer
+    (insert "(hello)\n")
+    (goto-char 4)
+    (helixel--surround-replace-pair (helixel--make-pair-delimiter ?\( ?\)) ?\[ ?\])
+    (should (equal (buffer-string) "[hello]\n"))))
+
+(ert-deftest helixel-test-surround-block-lookup ()
+  "Test block pair lookup returns (STRING . STRING)."
+  (with-temp-buffer
+    (org-mode)
+    (let ((pair (helixel--surround-block-lookup ?s)))
+      (should pair)
+      (should (stringp (car pair)))
+      (should (stringp (cdr pair)))
+      (should (string-match "begin_src" (car pair)))
+      (should (string-match "end_src" (cdr pair))))))
+
+(ert-deftest helixel-test-surround-block-lookup-fallback ()
+  "Test block pair lookup in fundamental mode returns nil."
+  (with-temp-buffer
+    (fundamental-mode)
+    (should-not (helixel--surround-block-lookup ?s))))
+
+(ert-deftest helixel-test-surround-available-keys ()
+  "Test `helixel--surround-available-keys' returns expected keys."
+  (with-temp-buffer
+    (fundamental-mode)
+    (let ((keys-str (string-join (helixel--surround-available-keys) " ")))
+      (should (string-match-p "(" keys-str))
+      (should (string-match-p "\\[" keys-str))
+      (should (string-match-p "'" keys-str))
+      (should (string-match-p "\"" keys-str)))))
+
+(ert-deftest helixel-test-surround-available-keys-org ()
+  "Test `helixel--surround-available-keys' includes block keys in org."
+  (with-temp-buffer
+    (org-mode)
+    (let ((keys (helixel--surround-available-keys)))
+      (should (cl-some (lambda (k) (string-match "src" k)) keys)))))
+
+(ert-deftest helixel-test-surround-delete-block ()
+  "Test delete block after ms s in org-mode."
+  (with-temp-buffer
+    (org-mode)
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (let ((pair (helixel--surround-block-lookup ?s)))
+      (helixel--surround-add (car pair) (cdr pair))
+      (let ((d (helixel--make-block-delimiter (car pair) (cdr pair))))
+        (let ((pos (helixel--surround-delete-delimiter d)))
+          (goto-char pos)
+          (should (equal (buffer-string) "hello")))))))
+
+;; ============================================================================
+;; surround: delimiter protocol + edge cases
+;; ============================================================================
+
+;; --- helixel-up-xml-tag match-data fix ---
+
+(ert-deftest helixel-test-up-xml-tag-match-data-from-opener ()
+  "match-data is preserved when starting on opening tag."
+  (with-temp-buffer
+    (insert "<div>hello</div>")
+    (goto-char 1)
+    (should (zerop (helixel-up-xml-tag 1)))
+    (should (match-beginning 0))
+    (should (= (match-beginning 0) 11))))
+
+(ert-deftest helixel-test-up-xml-tag-match-data-from-eob ()
+  "match-data is preserved when starting from end of buffer."
+  (with-temp-buffer
+    (insert "<div>\nhello\n</div>")
+    (goto-char (point-max))
+    (should (zerop (helixel-up-xml-tag -1)))
+    (should (match-beginning 0))
+    (should (= (match-beginning 0) 1))))
+
+(ert-deftest helixel-test-up-xml-tag-nested-from-inside ()
+  "Find innermost tag pair when point is inside content."
+  (with-temp-buffer
+    (insert "<div><span>hello</span></div>")
+    (goto-char 14) ;; inside "hello"
+    (should (zerop (helixel-up-xml-tag 1)))
+    (should (string= (match-string 0) "</span>"))
+    (should (zerop (helixel-up-xml-tag -1)))
+    (should (string= (match-string 0) "<span>"))))
+
+;; --- helixel--strip-adjacent-newlines ---
+
+(ert-deftest helixel-test-strip-adjacent-newlines-both ()
+  "Strip newlines on both sides."
+  (with-temp-buffer
+    (insert "open\ncontent\nclose")
+    (pcase-let ((`(,oe . ,cb) (helixel--strip-adjacent-newlines 5 14)))
+      (should (= oe 6))
+      (should (= cb 13)))))
+
+(ert-deftest helixel-test-strip-adjacent-newlines-none ()
+  "No newlines to strip."
+  (with-temp-buffer
+    (insert "openXcontentYclose")
+    (pcase-let ((`(,oe . ,cb) (helixel--strip-adjacent-newlines 5 13)))
+      (should (= oe 5))
+      (should (= cb 13)))))
+
+;; --- helixel-delimiter-bounds / unified delete ---
+
+(ert-deftest helixel-test-delimiter-bounds-pair ()
+  "Bounds for pair () from inside."
+  (with-temp-buffer
+    (insert "(hello)")
+    (goto-char 4)
+    (let* ((d (helixel--make-pair-delimiter ?\( ?\)))
+           (b (helixel-delimiter-bounds d)))
+      (should (= (caar b) 1))  ;; open-beg
+      (should (= (cdar b) 2))  ;; open-end
+      (should (= (cadr b) 7))  ;; close-beg
+      (should (= (cddr b) 8))))) ;; close-end
+
+(ert-deftest helixel-test-delimiter-bounds-pair-after-close ()
+  "Bounds for pair from after closing delimiter."
+  (with-temp-buffer
+    (insert "(hello)")
+    (goto-char 8) ;; after )
+    (let* ((d (helixel--make-pair-delimiter ?\( ?\)))
+           (b (helixel-delimiter-bounds d)))
+      (should (= (caar b) 1))
+      (should (= (cddr b) 8)))))
+
+(ert-deftest helixel-test-delimiter-bounds-quote ()
+  "Bounds for quote from inside (uses char-scanning fallback)."
+  (with-temp-buffer
+    (insert "\"hello\"")
+    (goto-char 4)
+    (should (> (helixel--surround-delete-delimiter
+                (helixel--make-pair-delimiter ?\" ?\")) 0))
+    (should (equal (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-delimiter-bounds-tag ()
+  "Bounds for tag from inside."
+  (with-temp-buffer
+    (insert "<div>hello</div>")
+    (goto-char 8)
+    (let* ((d (helixel--make-tag-delimiter))
+           (b (helixel-delimiter-bounds d)))
+      (should (= (caar b) 1))
+      (should (= (cadr b) 11)))))
+
+(ert-deftest helixel-test-delimiter-bounds-block-org ()
+  "Bounds for org block."
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+begin_src emacs-lisp\nhello\n#+end_src")
+    (goto-char 25)
+    (let* ((d (helixel--make-block-delimiter))
+           (b (helixel-delimiter-bounds d)))
+      (should b)
+      (should (>= (caar b) 1)))))
+
+(ert-deftest helixel-test-delete-block-via-delimiter ()
+  "Delete org block via unified delimiter-delete."
+  (with-temp-buffer
+    (org-mode)
+    (insert "#+begin_src emacs-lisp\nhello\n#+end_src")
+    (goto-char 26)
+    (let ((d (helixel--make-block-delimiter)))
+      (helixel--surround-delete-delimiter d)
+      (should (equal (buffer-string) "hello")))))
+
+;; --- replace-tag fix: trailing text + newline correctness ---
+
+(ert-deftest helixel-test-replace-tag-trailing-text ()
+  "Replace tag when text follows closing tag."
+  (with-temp-buffer
+    (insert "prefix\n<div>\nhello\n</div>\nsuffix")
+    (goto-char 14) ;; inside content
+    (helixel--surround-replace-tag "p" (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "prefix\n<p>\nhello\n</p>\nsuffix"))))
+
+(ert-deftest helixel-test-replace-tag-inline-no-newlines ()
+  "Replace inline tag, add newlines."
+  (with-temp-buffer
+    (insert "<div>hello</div>")
+    (goto-char 8)
+    (helixel--surround-replace-tag "p" (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "<p>\nhello\n</p>"))))
+
+(ert-deftest helixel-test-replace-tag-preexisting-newlines ()
+  "Replace tag that already has newlines."
+  (with-temp-buffer
+    (insert "<div>\nhello\n</div>")
+    (goto-char 9)
+    (helixel--surround-replace-tag "p" (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "<p>\nhello\n</p>"))))
+
+(ert-deftest helixel-test-replace-tag-eob-no-extra-newlines ()
+  "Replace tag at end of buffer, no extra \\n."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add-tag "div")
+    (helixel--surround-replace-tag "p" (helixel--make-tag-delimiter))
+    ;; Must not have double newline
+    (should-not (string-match "\n\n</p>" (buffer-string)))
+    (should (equal (buffer-string) "<p>\nhello\n</p>"))))
+
+;; --- nested tags ---
+
+(ert-deftest helixel-test-delete-tag-nested-same-name ()
+  "Delete innermost pair of same-name nested tags."
+  (with-temp-buffer
+    (insert "<div><div>hello</div></div>")
+    (goto-char 14) ;; inside inner content
+    (helixel--surround-delete-delimiter (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "<div>hello</div>"))))
+
+(ert-deftest helixel-test-delete-tag-nested-different-name ()
+  "Delete innermost pair of different-name nested tags."
+  (with-temp-buffer
+    (insert "<div><span>hello</span></div>")
+    (goto-char 15)
+    (helixel--surround-delete-delimiter (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "<div>hello</div>"))))
+
+(ert-deftest helixel-test-replace-tag-innermost-nested ()
+  "Replace innermost pair in nested tags."
+  (with-temp-buffer
+    (insert "<div><span>hello</span></div>")
+    (goto-char 15)
+    (helixel--surround-replace-tag "b" (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "<div><b>\nhello\n</b></div>"))))
+
+(ert-deftest helixel-test-nested-tag-mat-mr-replaces-inner ()
+  "After mat on inner tag of nested tags, mr replaces inner (not outer)."
+  (with-temp-buffer
+    (insert "<p>\n<div>\nhello\n</div>\n</p>\n\nworld")
+    ;; Simulate mat selecting outer <div> — region spans <div> to </div>
+    (push-mark 5 nil t)
+    (goto-char 25)
+    (activate-mark)
+    ;; position at midpoint of selection for finder
+    (goto-char (/ (+ 5 25) 2))
+    (helixel--surround-replace-tag "a" (helixel--make-tag-delimiter))
+    (should (equal (buffer-string)
+                   "<p>\n<a>\nhello\n</a>\n</p>\n\nworld"))))
+
+(ert-deftest helixel-test-nested-tag-mat-md-deletes-inner ()
+  "After mat on inner tag of nested tags, md deletes inner (not outer)."
+  (with-temp-buffer
+    (insert "<p>\n<div>\nhello\n</div>\n</p>\n\nworld")
+    ;; Simulate mat selecting outer <div> — region spans <div> to </div>
+    (push-mark 5 nil t)
+    (goto-char 25)
+    (activate-mark)
+    ;; position at midpoint of selection for finder
+    (goto-char (/ (+ 5 25) 2))
+    (helixel--surround-delete-delimiter (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "<p>\nhello\n</p>\n\nworld"))))
+
+;; --- unified delete via delimiter protocol ---
+
+(ert-deftest helixel-test-delete-delimiter-pair ()
+  "Unified delete for pair via delimiter."
+  (with-temp-buffer
+    (insert "[hello]")
+    (goto-char 4)
+    (let ((d (helixel--make-pair-delimiter ?\[ ?\])))
+      (helixel--surround-delete-delimiter d)
+      (should (equal (buffer-string) "hello")))))
+
+(ert-deftest helixel-test-delete-delimiter-regex ()
+  "Unified delete for regex block."
+  (with-temp-buffer
+    (insert "#+begin_quote\nhello\n#+end_quote")
+    (goto-char 18)
+    (let ((d (helixel--make-regex-delimiter
+              "#\\+begin_quote" "#\\+end_quote")))
+      (helixel--surround-delete-delimiter d)
+      (should (equal (buffer-string) "hello")))))
+
+(ert-deftest helixel-test-chain-mt-mr-md-via-delimiter ()
+  "Chain mt→mr→md via delimiter protocol."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add-tag "div")
+    (helixel--surround-replace-tag "p" (helixel--make-tag-delimiter))
+    (let ((d (helixel--make-tag-delimiter)))
+      (helixel--surround-delete-delimiter d)
+      (should (equal (buffer-string) "hello")))))
+
+;; --- delete-tag newline cleanup ---
+
+(ert-deftest helixel-test-delete-tag-strips-newlines ()
+  "Delete tag strips adjacent newlines."
+  (with-temp-buffer
+    (insert "<div>\nhello\n</div>")
+    (goto-char 9)
+    (helixel--surround-delete-delimiter (helixel--make-tag-delimiter))
+    (should (equal (buffer-string) "hello"))))
+
+;; --- ms add with new delimiter types ---
+
+(ert-deftest helixel-test-surround-add-brace ()
+  "Test `helixel--surround-add' with { pair."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add ?\{ ?\})
+    (should (equal (buffer-string) "{hello}"))))
+
+(ert-deftest helixel-test-surround-add-angle ()
+  "Test `helixel--surround-add' with < pair."
+  (with-temp-buffer
+    (transient-mark-mode 1)
+    (insert "hello")
+    (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
+    (helixel--surround-add ?\< ?\>)
+    (should (equal (buffer-string) "<hello>"))))
+
 ;;; helixel-test.el ends here
