@@ -1,4 +1,4 @@
-;;; helixel-repeat.el --- Repeat edit (`.`) infrastructure  -*- lexical-binding: t; -*-
+;;; helixel-repeat.el --- Repeat edit (`.`) system -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  jixiuf
 

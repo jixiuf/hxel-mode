@@ -381,7 +381,8 @@ Same group = same :category and same :subcat."
 Entries at POS, POS+1, ... with same group as RING[POS] form the group."
   (let ((len (length ring)))
     (while (and (< (1+ pos) len)
-                (helixel-action--same-group-p (nth pos ring) (nth (1+ pos) ring)))
+                (helixel-action--same-group-p
+                 (nth pos ring) (nth (1+ pos) ring)))
       (cl-incf pos))
     pos))
 

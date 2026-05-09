@@ -559,7 +559,7 @@ Replay typed text on all rectangle lines."
         (setq helixel--rect-replay-marker nil)))))
 
 (defun helixel--delete-selection ()
-  "Delete current region or char at point, pushing to kill-ring.
+  "Delete current region or char at point, pushing to `kill-ring'.
 Does NOT record an edit and does NOT clear selection data.
 Used as the shared kill core by `helixel-kill-thing-at-point',
 `helixel-change-thing-at-point', and `helixel--repeat-change-core'."

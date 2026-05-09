@@ -1,4 +1,4 @@
-;;; helixel-edit.el --- Unified edit transaction model  -*- lexical-binding: t; -*-
+;;; helixel-edit.el --- Edit transaction model -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026  jixiuf
 
@@ -42,9 +42,11 @@
 ;; Transaction Plist Schema
 ;;
 ;; (:op     symbol    ;; kill | change | copy | replace | replace-char
-;;                    ;; | paste-after | paste-before | indent-left | indent-right
+;;                    ;; | paste-after | paste-before
+;;                    ;; | indent-left | indent-right
 ;;                    ;; | insert-text
-;;  :sel    plist|nil ;; selection context (:fn F :kind K) or (:kind movement :moves ...)
+;;  :sel    plist|nil ;; selection context (:fn F :kind K)
+;;                    ;; or (:kind movement :moves ...)
 ;;                    ;; nil = no selection (cursor-at-point operations)
 ;;  :payload plist    ;; operator-specific data, always a plist (may be nil)
 ;;  :marker marker)   ;; position where the edit started (for ; jumping)

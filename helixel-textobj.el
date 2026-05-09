@@ -1246,7 +1246,7 @@ move backward |COUNT| levels.
 
 If NAME-GROUP is an integer, only match blocks with the same name
 captured by that regex group in both BEGIN-RE and END-RE (e.g., 1 for
-org-mode #+begin_foo / #+end_foo).  The two regexps must capture the
+`org-mode' #+begin_foo / #+end_foo).  The two regexps must capture the
 block name in the same group number.
 
 If NAME-GROUP is nil, use counter-based balancing: each BEGIN-RE match
@@ -1279,6 +1279,7 @@ Handles escaped backslashes."
 
 (defun helixel--up-regex-block-named (begin-re end-re count name-group)
   "Named-block variant of `helixel-up-regex-block'.
+COUNT specifies the number of levels to traverse.
 NAME-GROUP specifies which capture group in BEGIN-RE and END-RE
 contains the block name (1-based)."
   (let* ((dir (if (> count 0) +1 -1))
@@ -1310,7 +1311,7 @@ contains the block name (1-based)."
                  (cond
                   ((match-beginning op-outer)   ; found opener (in search dir)
                    (push (match-string op-name) tags))
-                  ((null tags) nil)              ; closer with empty stack: target
+                  ((null tags) nil) ; closer with empty stack: target
                   ((and (< dir 0)
                         (string= (car tags) (match-string cl-name)))
                    ;; backward: matching closer, pop; break if stack empty
@@ -1364,7 +1365,9 @@ contains the block name (1-based)."
     (* dir count)))
 
 (defun helixel--up-regex-block-counter (begin-re end-re count)
-  "Counter-based variant of `helixel-up-regex-block'."
+  "Counter-based variant of `helixel-up-regex-block'.
+BEGIN-RE and END-RE are regexps for the opening and closing delimiters.
+COUNT specifies the number of levels to traverse."
   (let* ((dir (if (> count 0) +1 -1))
          (remaining (abs count))
          (orig (point)))
@@ -1377,7 +1380,9 @@ contains the block name (1-based)."
                 (progn
                   (setq remaining (1- remaining))
                   (unless (zerop remaining)
-                    (goto-char (if (> dir 0) (match-end 0) (match-beginning 0)))))
+                    (goto-char (if (> dir 0)
+                                   (match-end 0)
+                                 (match-beginning 0))))))
               (goto-char (if (> dir 0) (point-max) (point-min)))
               (setq remaining 0)))
           (if match
@@ -1395,11 +1400,13 @@ contains the block name (1-based)."
             (setq remaining 0))
           (when match
             (if (match-beginning 1)
-                ;; Found begin: going forward = deeper nesting, going backward = target
+                ;; Found begin: going forward = deeper nesting,
+                ;; going backward = target
                 (if (> dir 0)
                     (setq remaining (1+ remaining))
                   (setq remaining (1- remaining)))
-              ;; Found end: going forward = target, going backward = deeper nesting
+              ;; Found end: going forward = target,
+              ;; going backward = deeper nesting
               (if (> dir 0)
                   (setq remaining (1- remaining))
                 (setq remaining (1+ remaining))))
@@ -1407,7 +1414,7 @@ contains the block name (1-based)."
               (goto-char (if (> dir 0) (match-end 0) (match-beginning 0))))))
         (if (and match (zerop remaining))
             (progn (set-match-data (list (match-beginning 0) (match-end 0))) 0)
-          (* dir (if match remaining 1)))))))
+          (* dir (if match remaining 1))))))
 
 (defun helixel-select-regex-block (begin-re end-re beg end type count
                                              &optional inclusive name-group)
@@ -1481,7 +1488,8 @@ pair.  INNER-P non-nil means inner, nil means a."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj))))))))
+             (setq helixel--repeat-sel-ctx
+                   (list :fn this-command :kind 'textobj))))))))
 
 (defmacro helixel-define-mark-quote (name quote-char doc inner-p)
   "Define mark inner/a functions for a quote character.
@@ -1511,8 +1519,9 @@ INNER-P non-nil means inner, nil means a."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj))))))))
-
+             (setq helixel--repeat-sel-ctx
+                   (list :fn this-command :kind 'textobj))))))))
+ 
 (defmacro helixel-define-mark-object
     (name thing doc subcat &optional restricted-p)
   "Define mark inner/a functions for a text object.
@@ -1552,7 +1561,8 @@ RESTRICTED-P non-nil means use restricted version (for word/WORD)."
                  (push-mark (car range) nil t)
                  (goto-char (cdr range))
                  (setq helixel--selection-type 'textobj)
-                 (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))))
+                 (setq helixel--repeat-sel-ctx
+                       (list :fn this-command :kind 'textobj)))))))
        (defun ,outer-name (&optional count)
          ,outer-doc
          (interactive "p")
@@ -1570,10 +1580,11 @@ RESTRICTED-P non-nil means use restricted version (for word/WORD)."
                  (push-mark (car range) nil t)
                  (goto-char (cdr range))
                  (setq helixel--selection-type 'textobj)
-                 (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj))))))))))
+                 (setq helixel--repeat-sel-ctx
+                       (list :fn this-command :kind 'textobj))))))))))
 
 
-;; ============================================================================
+ ;; ============================================================================
 ;; tag Text Objects
 ;; ============================================================================
 
@@ -1644,8 +1655,8 @@ NAME-GROUP is an integer specifying which capture group in both
 
 (defcustom helixel-block-textobj-fallback-alist
   nil
-  "Additional fallback block patterns used when `helixel-block-textobj-alist'
-has no matching entry for the current major mode.
+  "Additional fallback block patterns for the current major mode.
+Used when `helixel-block-textobj-alist' has no matching entry.
 
 Each element has the form (MODE BEGIN-RE END-RE NAME-GROUP) where
 MODE is currently reserved (use nil).  BEGIN-RE and END-RE are
@@ -1670,6 +1681,7 @@ tried.  The tightest enclosing delimiter wins."
 (defun helixel-up-block-at-point (&optional count)
   "Move point past the nearest matching block delimiter.
 
+COUNT specifies the number of block levels to traverse.
 Consults `helixel-block-textobj-alist' and tries every pattern
 whose MODE satisfies `derived-mode-p'.  The tightest enclosing
 delimiter wins, so nested blocks of different types (e.g. a
@@ -1760,6 +1772,9 @@ Returns 0 on success, non-zero if not all levels found."
 (defun helixel-select-block-at-point (beg end type count &optional inclusive)
   "Select block delimited text for the current major mode.
 
+BEG and END are the region boundaries.  TYPE is the selection type.
+COUNT specifies the number of block levels to traverse.
+INCLUSIVE determines whether the selection includes the delimiters.
 See `helixel-up-block-at-point' for supported modes."
   (unless inclusive (setq inclusive 'exclusive-line))
   (unwind-protect
@@ -1830,7 +1845,8 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
+             (setq helixel--repeat-sel-ctx
+                   (list :fn this-command :kind 'textobj)))))
        (defun ,outer-name (&optional count)
          ,outer-doc
          (interactive "p")
@@ -1845,7 +1861,8 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
              (push-mark (car range) nil t)
              (goto-char (cadr range))
              (setq helixel--selection-type 'textobj)
-             (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'textobj)))))
+             (setq helixel--repeat-sel-ctx
+                   (list :fn this-command :kind 'textobj)))))
        (define-key helixel-textobj-inner-map ,key #',inner-name)
        (define-key helixel-textobj-outer-map ,key #',outer-name))))
 
