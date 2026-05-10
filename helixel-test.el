@@ -795,7 +795,7 @@
       (helixel-define-key 'normal "j" #'next-line 'helixel-test-mode)
       (helixel--refresh-overriding-maps)
       ;; Should have an entry in minor-mode-overriding-map-alist
-      (let ((entry (assq 'helixel-normal-mode minor-mode-overriding-map-alist)))
+      (let ((entry (assq 'helixel-normal-state minor-mode-overriding-map-alist)))
         (should entry)
         (should (eq (lookup-key (cdr entry) "j") #'next-line))))))
 
@@ -806,10 +806,10 @@
       (setq-local helixel--current-state 'normal)
       ;; Pre-populate with a stale entry
       (setq minor-mode-overriding-map-alist
-            (list (cons 'helixel-normal-mode (make-sparse-keymap))))
+            (list (cons 'helixel-normal-state (make-sparse-keymap))))
       (helixel--refresh-overriding-maps)
       ;; Should have cleared the entry
-      (should-not (assq 'helixel-normal-mode minor-mode-overriding-map-alist)))))
+      (should-not (assq 'helixel-normal-state minor-mode-overriding-map-alist)))))
 
 (ert-deftest helixel-test-refresh-overriding-maps-no-cross-mode-leak ()
   "Test that bindings for one major mode don't leak into another."
@@ -822,7 +822,7 @@
       (setq-local helixel--current-state 'normal)
       (helixel--refresh-overriding-maps)
       ;; Should have no overriding entry
-      (should-not (assq 'helixel-normal-mode minor-mode-overriding-map-alist)))))
+      (should-not (assq 'helixel-normal-state minor-mode-overriding-map-alist)))))
 
 (ert-deftest helixel-test-refresh-overriding-maps-fallback-to-base ()
   "Test that non-overridden keys fall back to base helixel keymap."
@@ -833,7 +833,7 @@
       ;; Override only "j"
       (helixel-define-key 'normal "j" #'next-line 'helixel-test-mode)
       (helixel--refresh-overriding-maps)
-      (let ((entry (assq 'helixel-normal-mode minor-mode-overriding-map-alist)))
+      (let ((entry (assq 'helixel-normal-state minor-mode-overriding-map-alist)))
         (should entry)
         ;; Overridden key works
         (should (eq (lookup-key (cdr entry) "j") #'next-line))

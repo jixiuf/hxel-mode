@@ -69,11 +69,11 @@ at point (t) or simply insert without deleting (nil)."
   "Current modal state, one of normal, insert, or motion.")
 
 
-(defvar helixel-state-mode-alist
-  `((insert . helixel-insert-mode)
-    (normal . helixel-normal-mode)
-    (visual . helixel-visual-mode)
-    (motion . helixel-motion-mode))
+(defvar helixel-state-alist
+  `((insert . helixel-insert-state)
+    (normal . helixel-normal-state)
+    (visual . helixel-visual-state)
+    (motion . helixel-motion-state))
   "Alist of symbol state name to minor mode.")
 
 (defvar-local helixel--selection-type nil
@@ -90,14 +90,14 @@ nil means charwise, `line' means linewise, `rect' means rectangle.")
   "Enable Helixel mode in all buffers.")
 
 ;; These Helixel Minor keymap modes are assigned keymaps during
-;; `helixel-normal-mode' initialization.
+;; `helixel-normal-state' initialization.
 (defvar helixel-goto-map nil "Keymap for Goto mode.")
 (defvar helixel-view-map nil "Keymap for View mode.")
 (defvar helixel-space-map nil "Keymap for Space mode.")
 (defvar helixel-window-map nil "Keymap for Window mode.")
 (defvar helixel-textobj-map nil "Keymap for textobj mode.")
 ;; Forward declaration - defined later with keymap initializers
-(defvar helixel--state-to-keymap-alist)
+(defvar helixel-state-map-alist)
 
 (defvar helixel--mode-keybindings nil
   "Alist of ((MODE . STATE) . sparse-keymap).
@@ -111,7 +111,7 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
 
 (defun helixel--unload-current-state ()
   "Deactivate the minor mode described by `helixel--current-state'."
-  (let ((mode (alist-get helixel--current-state helixel-state-mode-alist)))
+  (let ((mode (alist-get helixel--current-state helixel-state-alist)))
     (funcall mode -1)))
 
 (defun helixel--switch-state (state)
@@ -120,7 +120,7 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
     (helixel--unload-current-state)
     (helixel--clear-data)
     (setq-local helixel--current-state state)
-    (let ((mode (alist-get state helixel-state-mode-alist)))
+    (let ((mode (alist-get state helixel-state-alist)))
       (funcall mode 1))
     (helixel--refresh-overriding-maps)))
 
@@ -891,7 +891,7 @@ Example with multiple callbacks:
             (funcall cb)))
       (message "no such command '%s'" command))))
 
-(defvar helixel-normal-state-keymap
+(defvar helixel-normal-map
   (let ((keymap (make-keymap)))
     (define-prefix-command 'helixel-goto-map)
     (define-prefix-command 'helixel-view-map)
@@ -1023,31 +1023,31 @@ Example with multiple callbacks:
     keymap)
   "Keymap for Helixel normal state.")
 
-(defvar helixel-visual-state-keymap
+(defvar helixel-visual-map
   (let ((keymap (make-sparse-keymap)))
-    (set-keymap-parent keymap helixel-normal-state-keymap)
+    (set-keymap-parent keymap helixel-normal-map)
     (define-key keymap "v" #'helixel-visual-exit)
     (define-key keymap [escape] #'helixel-visual-exit)
     keymap)
   "Keymap for Helixel visual state.  Inherits from normal state keymap.")
 
-(defvar helixel-motion-state-keymap
+(defvar helixel-motion-map
   (let ((keymap (make-keymap)))
     (suppress-keymap keymap t)
     keymap)
   "Keymap for Helixel motion state.")
 
-(defvar helixel-insert-state-keymap
+(defvar helixel-insert-map
   (let ((keymap (make-keymap)))
     (define-key keymap [escape] #'helixel-insert-exit)
     keymap)
   "Keymap for Helixel insert state.")
 
-(defvar helixel--state-to-keymap-alist
-  `((insert . ,helixel-insert-state-keymap)
-    (normal . ,helixel-normal-state-keymap)
-    (visual . ,helixel-visual-state-keymap)
-    (motion . ,helixel-motion-state-keymap)
+(defvar helixel-state-map-alist
+  `((insert . ,helixel-insert-map)
+    (normal . ,helixel-normal-map)
+    (visual . ,helixel-visual-map)
+    (motion . ,helixel-motion-map)
     (textobj . ,helixel-textobj-map)
     (textobj-inner . ,helixel-textobj-inner-map)
     (textobj-outer . ,helixel-textobj-outer-map)
@@ -1061,7 +1061,7 @@ Example with multiple callbacks:
   "Define a Helixel keybinding for KEY to DEF.
 
 When MODE is nil, bind to the keymap associated with STATE from
-`helixel--state-to-keymap-alist'.  When MODE is provided (e.g.,
+`helixel-state-map-alist'.  When MODE is provided (e.g.,
 \\='dired-mode), store the binding so it takes precedence via
 `minor-mode-overriding-map-alist' when that mode is active.
 
@@ -1093,7 +1093,7 @@ Example:
     #\\='helixel-mark-inner-org-block \\='org-mode)
   (helixel-define-key \\='textobj-outer \"o\"
     #\\='helixel-mark-a-org-block \\='org-mode)"
-  (unless (alist-get state helixel--state-to-keymap-alist)
+  (unless (alist-get state helixel-state-map-alist)
     (error "Invalid state %s" state))
   (if mode
       ;; Store binding in helixel--mode-keybindings
@@ -1104,13 +1104,13 @@ Example:
           (push entry helixel--mode-keybindings))
         (define-key (cdr entry) key def))
     ;; Bind to global state keymap
-    (let ((state-keymap (alist-get state helixel--state-to-keymap-alist)))
+    (let ((state-keymap (alist-get state helixel-state-map-alist)))
       (define-key state-keymap key def))))
 
 (defun helixel--refresh-overriding-maps ()
   "Rebuild `minor-mode-overriding-map-alist' for the current buffer."
   (let ((state helixel--current-state)
-        (state-mode (alist-get helixel--current-state helixel-state-mode-alist))
+        (state-mode (alist-get helixel--current-state helixel-state-alist))
         (overrides nil))
     (dolist (entry helixel--mode-keybindings)
       (let ((mode (caar entry)))
@@ -1121,7 +1121,7 @@ Example:
     (setq minor-mode-overriding-map-alist
           (assq-delete-all state-mode minor-mode-overriding-map-alist))
     (when overrides
-      (let ((base-keymap (alist-get state helixel--state-to-keymap-alist)))
+      (let ((base-keymap (alist-get state helixel-state-map-alist)))
         (push (cons state-mode (make-composed-keymap overrides base-keymap))
               minor-mode-overriding-map-alist)))
     ;; Textobj sub-map mode-specific overrides
@@ -1160,21 +1160,21 @@ to composed keymaps with mode overrides on top of the base maps."
         (define-key helixel-textobj-map "a"
           (make-composed-keymap outer-overrides helixel-textobj-outer-map))))))
 
-(define-minor-mode helixel-insert-mode
+(define-minor-mode helixel-insert-state
   "Helixel INSERT state minor mode."
   :lighter " helixel[I]"
   :init-value nil
   :interactive nil
   :global nil
-  :keymap helixel-insert-state-keymap
-  (if helixel-insert-mode
+  :keymap helixel-insert-map
+  (if helixel-insert-state
       (progn
         (setq-local helixel--current-state 'insert)
         (setq cursor-type 'bar))
     (setq-local helixel--current-state 'normal)))
 
 ;;;###autoload
-(define-minor-mode helixel-motion-mode
+(define-minor-mode helixel-motion-state
   "Helixel MOTION state minor mode for read-only navigation.
 Only j, k, g keys are available by default.
 Use `helixel-define-key' to add major-mode specific bindings."
@@ -1182,22 +1182,22 @@ Use `helixel-define-key' to add major-mode specific bindings."
   :init-value nil
   :interactive nil
   :global nil
-  :keymap helixel-motion-state-keymap
-  (if helixel-motion-mode
+  :keymap helixel-motion-map
+  (if helixel-motion-state
       (progn
         (setq-local helixel--current-state 'motion)
         (setq cursor-type 'box)
         (helixel--refresh-overriding-maps))
     (setq-local helixel--current-state 'normal)))
 
-(define-minor-mode helixel-visual-mode
+(define-minor-mode helixel-visual-state
   "Helixel VISUAL state minor mode."
   :lighter " helixel[V]"
   :init-value nil
   :interactive nil
   :global nil
-  :keymap helixel-visual-state-keymap
-  (if helixel-visual-mode
+  :keymap helixel-visual-map
+  (if helixel-visual-state
       (progn
         (setq-local helixel--current-state 'visual)
         (setq cursor-type 'box)
@@ -1205,14 +1205,14 @@ Use `helixel-define-key' to add major-mode specific bindings."
     (setq-local helixel--current-state 'normal)))
 
 ;;;###autoload
-(define-minor-mode helixel-normal-mode
+(define-minor-mode helixel-normal-state
   "Helixel NORMAL state minor mode."
   :lighter " helixel[N]"
   :init-value nil
   :interactive t
   :global nil
-  :keymap helixel-normal-state-keymap
-  (if helixel-normal-mode
+  :keymap helixel-normal-map
+  (if helixel-normal-state
       (progn
         (setq-local helixel--current-state 'normal)
         (setq cursor-type 'box)
@@ -1250,11 +1250,11 @@ The default state is determined by `helixel--default-state-for-buffer'."
     (if (and status (<= status 0))
         ;; Deactivate current state
         (let ((mode (alist-get helixel--current-state
-                               helixel-state-mode-alist)))
+                               helixel-state-alist)))
           (funcall mode -1))
       ;; Activate default state
       (let* ((state (helixel--default-state-for-buffer))
-             (mode (alist-get state helixel-state-mode-alist)))
+             (mode (alist-get state helixel-state-alist)))
         (funcall mode (if status status 1))
         (helixel--refresh-overriding-maps)))))
 
@@ -1266,7 +1266,7 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
   (interactive)
   (helixel-action-start 'state 'toggle)
   ;; Set global mode to t before iterating over the buffers so that we
-  ;; send the status directly to `helixel-normal-mode' (which checks for
+  ;; send the status directly to `helixel-normal-state' (which checks for
   ;; a non-nil value of `helixel-global-mode'.
   (setq helixel-global-mode t)
   (mapc (lambda (buf)
@@ -1289,10 +1289,10 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
         (add-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)
         (helixel-mode-maybe-activate 1))
     (cond
-     (helixel-normal-mode (helixel-normal-mode -1))
-     (helixel-insert-mode (helixel-insert-mode -1))
-     (helixel-motion-mode (helixel-motion-mode -1))
-     (helixel-visual-mode (helixel-visual-mode -1)))
+     (helixel-normal-state (helixel-normal-state -1))
+     (helixel-insert-state (helixel-insert-state -1))
+     (helixel-motion-state (helixel-motion-state -1))
+     (helixel-visual-state (helixel-visual-state -1)))
     (advice-remove #'keyboard-quit #'helixel--clear-data)
     (advice-remove #'keyboard-quit #'helixel--cancel-action)
     (remove-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)))
