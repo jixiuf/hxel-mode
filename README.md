@@ -61,7 +61,8 @@ Requires Emacs >= 29.1.
 
 `m i` (inner) and `m a` (a / around) select text objects.  Supports
 word (`w`), WORD (`W`), symbol (`o`), sentence (`s`), paragraph (`p`),
-pairs (`(` `[` `{` `<`), quotes (`\"` `'` `` \` ``), and tags (`t`).
+pairs (`(` `[` `{` `<`), quotes (`\"` `'` `` \` ``), tags (`t`),
+and block (`c`).
 
 **Region-aware selection** — in normal mode when a region is already
 active, the first press selects the text object **within the highlighted
@@ -73,6 +74,27 @@ region** instead of what is at point.  This means:
 
 White space adjustment: cursor on whitespace between words automatically
 finds the adjacent word.
+
+**Block text object** — `mi c` / `ma c` selects the nearest enclosing
+block (org `#+begin_src`/`#+end_src`, markdown ``` fences, or bracket
+pairs `()` `[]` `{}`).  Mode-specific patterns are configured via
+`helixel-block-textobj-alist`:
+
+```elisp
+;; Built-in defaults — override to add or customize
+(setq helixel-block-textobj-alist
+      '((org-mode . ("^#\\+begin_\\([^ \n\r]+\\)[^\n]*"
+                     "^#\\+end_\\([^ \n\r]+\\)[^\n]*" 1))
+        (org-mode . ("^```.+$" "^```[ \t]*$" nil))
+        (markdown-mode . ("^```.+$" "^```[ \t]*$" nil))
+        (gfm-mode . ("^```.+$" "^```[ \t]*$" nil))))
+```
+
+Each entry is `(MODE . (BEGIN-RE END-RE NAME-GROUP))`.  Multiple
+entries for the same MODE are tried; the tightest enclosing block wins.
+`NAME-GROUP` nil means counter-based balancing (fences), an integer
+means name-based (org blocks).  Fallback patterns can be added via
+`helixel-block-textobj-fallback-alist`.
 
 ### Surround
 
@@ -293,8 +315,16 @@ org blocks, markdown fences, LaTeX environments, etc.:
 (helixel-define-regex-textobj org-block
   "^#\\+begin_\\([^ \n\r]+\\)[^\n]*"
   "^#\\+end_\\([^ \n\r]+\\)[^\n]*" 1 'block)
+
+;; Global binding (all modes)
 (define-key helixel-textobj-inner-map "o" #'helixel-mark-inner-org-block)
 (define-key helixel-textobj-outer-map "o" #'helixel-mark-a-org-block)
+
+;; Or mode-specific (org-mode only):
+(helixel-define-key 'textobj-inner "o"
+  #'helixel-mark-inner-org-block 'org-mode)
+(helixel-define-key 'textobj-outer "o"
+  #'helixel-mark-a-org-block 'org-mode)
 
 ;; Markdown ``` fences (counter-based: name-group nil)
 (helixel-define-regex-textobj md-fence
@@ -311,7 +341,7 @@ org blocks, markdown fences, LaTeX environments, etc.:
 
 Arguments: `(NAME BEGIN-RE END-RE &optional NAME-GROUP SUBCAT)`.
 
-- **NAME**: a symbol for the command suffix (e.g. `latex-env` → `helixel-mark-inner-latex-env`)
+- **NAME**: an unquoted symbol for the command suffix (e.g. `org-block` → `helixel-mark-inner-org-block`)
 - **BEGIN-RE** / **END-RE**: regexps matching the opening/closing delimiter lines
 - **NAME-GROUP**: if an integer, that capture group in both regexps must match (name-based balancing). Use `nil` for counter-based balancing (e.g. markdown fences)
 - **SUBCAT**: subcategory symbol for `;` session grouping (default `'block`)

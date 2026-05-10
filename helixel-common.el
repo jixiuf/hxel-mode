@@ -1049,6 +1049,8 @@ Example with multiple callbacks:
     (visual . ,helixel-visual-state-keymap)
     (motion . ,helixel-motion-state-keymap)
     (textobj . ,helixel-textobj-map)
+    (textobj-inner . ,helixel-textobj-inner-map)
+    (textobj-outer . ,helixel-textobj-outer-map)
     (view . ,helixel-view-map)
     (goto . ,helixel-goto-map)
     (window . ,helixel-window-map)
@@ -1064,7 +1066,8 @@ When MODE is nil, bind to the keymap associated with STATE from
 `minor-mode-overriding-map-alist' when that mode is active.
 
 Argument STATE must be one of: insert, normal, motion, visual, view,
-goto, window, space.
+goto, window, space, textobj (m prefix), textobj-inner (mi prefix),
+textobj-outer (ma prefix).
 
 Argument KEY and DEF follow the same conventions as `define-key'.
 
@@ -1083,7 +1086,13 @@ Example:
 
   ;; Motion state with major-mode specific bindings
   (helixel-define-key \\='motion \"j\" #\\='next-line \\='prog-mode)
-  (helixel-define-key \\='motion \"k\" #\\='previous-line \\='prog-mode)"
+  (helixel-define-key \\='motion \"k\" #\\='previous-line \\='prog-mode)
+
+  ;; Mode-specific text object binding (org-mode only)
+  (helixel-define-key \\='textobj-inner \"o\"
+    #\\='helixel-mark-inner-org-block \\='org-mode)
+  (helixel-define-key \\='textobj-outer \"o\"
+    #\\='helixel-mark-a-org-block \\='org-mode)"
   (unless (alist-get state helixel--state-to-keymap-alist)
     (error "Invalid state %s" state))
   (if mode
@@ -1114,7 +1123,42 @@ Example:
     (when overrides
       (let ((base-keymap (alist-get state helixel--state-to-keymap-alist)))
         (push (cons state-mode (make-composed-keymap overrides base-keymap))
-              minor-mode-overriding-map-alist)))))
+              minor-mode-overriding-map-alist)))
+    ;; Textobj sub-map mode-specific overrides
+    (helixel--refresh-textobj-overrides)))
+
+(defun helixel--refresh-textobj-overrides ()
+  "Build mode-specific composed keymaps for textobj inner/outer.
+When `helixel--mode-keybindings' contains entries for `textobj-inner'
+or `textobj-outer' in the current `major-mode', make
+`helixel-textobj-map' buffer-local and point its \"i\"/\"a\" entries
+to composed keymaps with mode overrides on top of the base maps."
+  (let ((inner-overrides nil)
+        (outer-overrides nil))
+    (dolist (entry helixel--mode-keybindings)
+      (let ((mode (caar entry))
+            (sub (cdar entry)))
+        (when (or (eq mode major-mode)
+                  (and (boundp mode) (symbol-value mode)))
+          (cond ((eq sub 'textobj-inner)
+                 (push (cdr entry) inner-overrides))
+                ((eq sub 'textobj-outer)
+                 (push (cdr entry) outer-overrides))))))
+    ;; Restore defaults when no overrides
+    (unless (or inner-overrides outer-overrides)
+      (when (local-variable-p 'helixel-textobj-map)
+        (define-key helixel-textobj-map "i" helixel-textobj-inner-map)
+        (define-key helixel-textobj-map "a" helixel-textobj-outer-map)
+        (kill-local-variable 'helixel-textobj-map)))
+    ;; Build composed keymaps with overrides
+    (when (or inner-overrides outer-overrides)
+      (make-local-variable 'helixel-textobj-map)
+      (when inner-overrides
+        (define-key helixel-textobj-map "i"
+          (make-composed-keymap inner-overrides helixel-textobj-inner-map)))
+      (when outer-overrides
+        (define-key helixel-textobj-map "a"
+          (make-composed-keymap outer-overrides helixel-textobj-outer-map))))))
 
 (define-minor-mode helixel-insert-mode
   "Helixel INSERT state minor mode."

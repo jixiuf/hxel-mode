@@ -450,14 +450,19 @@ All textobj macros and hand-written functions use this helper, eliminating
 (helixel-define-mark-object NAME THING DOC SUBCAT &optional RESTRICTED-P)
 (helixel-define-mark-pair NAME OPEN CLOSE DOC INNER-P)
 (helixel-define-mark-quote NAME QUOTE-CHAR DOC INNER-P)
-(helixel-define-regex-textobj KEY NAME BEGIN-RE END-RE &optional NAME-GROUP SUBCAT)
+(helixel-define-regex-textobj NAME BEGIN-RE END-RE &optional NAME-GROUP SUBCAT)
 ```
 
 `helixel-define-regex-textobj` defines inner/a textobj commands for
 regex-delimited blocks (org `#+begin_src`/`#+end_src`, markdown ``` fences,
-LaTeX environments, etc.).  It generates two commands, wires them to the
-action hook, and auto-binds both in the textobj keymaps under KEY.
-NAME-GROUP enables name-based balancing; nil uses counter-based matching.
+LaTeX environments, etc.).  It generates two commands and wires them to the
+action hook.  NAME-GROUP enables name-based balancing; nil uses counter-based
+matching.
+
+The built-in block textobj (`mi c` / `ma c`) uses
+`helixel-block-textobj-alist` with pre-configured patterns for org-mode
+and markdown-mode, plus `helixel-block-textobj-fallback-alist` for
+additional patterns.
 
 ### Subcategories
 
