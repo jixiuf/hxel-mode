@@ -10,21 +10,29 @@
 | `helixel-repeat.el` | Dot-repeat (`.`): recording (`helixel--record-edit` → `helixel--last-tx`), selection replay, execution dispatcher. Requires helixel-action, helixel-edit. |
 | `helixel-common.el` | State machine, keymaps, movement, editing commands, shared kill core. Requires helixel-action, helixel-textobj, helixel-repeat. |
 | `helixel-search.el` | Search & find-char engine + repeat context. Requires helixel-common. |
-| `helixel-textobj.el` | Text objects. Independent of helixel-common via hooks. |
-| `helixel-test.el` | ERT test suite (254 tests) |
+| `helixel-textobj.el` | Text objects and selection. Independent of helixel-common via hooks. |
+| `helixel-delimiter.el` | Unified delimiter protocol: plist accessors, finder (`helixel-delimiter-find`), bounds (`helixel-delimiter-bounds`), builders for pair/tag/block/regex delimiters. |
+| `helixel-surround.el` | Surround operations: add, delete, replace. Uses delimiter protocol from helixel-delimiter. |
+| `helixel-test.el` | ERT test suite (305 tests) |
 
 ### Dependency Graph
 
 ```
-helixel-edit.el       kernel (no helixel deps)
+helixel-edit.el          kernel (no helixel deps)
    ↓
-helixel-action.el     ring + ;  (requires helixel-edit)
+helixel-action.el        ring + ;  (requires helixel-edit)
    ↓
-helixel-repeat.el     . infrastructure (requires helixel-action + edit)
+helixel-repeat.el        . infrastructure (requires helixel-action + edit)
    ↓
-helixel-common.el     state machine + editing (requires all above)
+helixel-delimiter.el     delimiter protocol (standalone)
    ↓
-helixel-search.el     (requires helixel-common)
+helixel-textobj.el       text objects (requires helixel-delimiter)
+   ↓
+helixel-surround.el      surround ops (requires helixel-delimiter)
+   ↓
+helixel-common.el        state machine + editing (requires all above)
+   ↓
+helixel-search.el        (requires helixel-common)
 ```
 
 ### Edit Transaction Schema (`helixel-edit.el`)
@@ -422,13 +430,34 @@ Movement commands in `helixel-common.el` delegate to these:
 Text objects (`iw`,`aw`,`iW`,`aW`) use the same underlying `helixel--forward-word` /
 `helixel--forward-WORD` forward-ops via the thing-at-point system.
 
+### Selection Activation Helper
+
+All textobj commands delegate to a single helper for activating the range:
+
+```elisp
+(helixel--activate-textobj-range RANGE &optional DELIMITER)
+```
+
+Handles both cons `(BEG . END)` and list `(BEG END ...)` ranges.
+Sets `helixel--selection-type` to `'textobj` and populates
+`helixel--repeat-sel-ctx` with `:fn this-command :kind 'textobj :delimiter`.
+All textobj macros and hand-written functions use this helper, eliminating
+~57 lines of duplicated boilerplate.
+
 ### Macros
 
 ```elisp
 (helixel-define-mark-object NAME THING DOC SUBCAT &optional RESTRICTED-P)
 (helixel-define-mark-pair NAME OPEN CLOSE DOC INNER-P)
 (helixel-define-mark-quote NAME QUOTE-CHAR DOC INNER-P)
+(helixel-define-regex-textobj KEY NAME BEGIN-RE END-RE &optional NAME-GROUP SUBCAT)
 ```
+
+`helixel-define-regex-textobj` defines inner/a textobj commands for
+regex-delimited blocks (org `#+begin_src`/`#+end_src`, markdown ``` fences,
+LaTeX environments, etc.).  It generates two commands, wires them to the
+action hook, and auto-binds both in the textobj keymaps under KEY.
+NAME-GROUP enables name-based balancing; nil uses counter-based matching.
 
 ### Subcategories
 
@@ -442,6 +471,7 @@ Text objects (`iw`,`aw`,`iW`,`aW`) use the same underlying `helixel--forward-wor
 | brackets | `pair` | `mi(` `ma(` `mi[` `ma[` `mi{` `ma{` `mi<` `ma<` |
 | quotes | `quote` | `mi"` `ma"` `mi'` `ma'` ``mi` `` ``ma` `` |
 | tag | `tag` | `mit` `mat` |
+| block | `block` | `mic` `mac` |
 
 Different subcats create independent sessions for `;`.
 All text objects call the action hook (`helixel-textobj-action-function`) when
@@ -459,4 +489,4 @@ available, which `helixel-common.el` wires to `helixel-action-start`.
 
 - Use `(helixel-test-with-buffer "content" body...)` for buffer tests
 - Set `this-command` and `last-command` before calling functions that use them
-- 208 ERT tests covering search, find-char, movement, textobj, action tracking, history, and session management
+- 305 ERT tests covering search, find-char, movement, textobj, surround, action tracking, history, and session management

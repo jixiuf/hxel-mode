@@ -283,6 +283,39 @@ like `github.com/foo/bar`):
 `mi p` now selects the inner Go package path at point;
 `ma p` selects it plus surrounding whitespace.
 
+### Regex Text Objects
+
+Define text objects delimited by arbitrary regexp patterns — useful for
+org blocks, markdown fences, LaTeX environments, etc.:
+
+```elisp
+;; Org mode #+begin_src / #+end_src blocks (match by name group)
+(helixel-define-regex-textobj org-block
+  "^#\\+begin_\\([^ \n\r]+\\)[^\n]*"
+  "^#\\+end_\\([^ \n\r]+\\)[^\n]*" 1 'block)
+(define-key helixel-textobj-inner-map "o" #'helixel-mark-inner-org-block)
+(define-key helixel-textobj-outer-map "o" #'helixel-mark-a-org-block)
+
+;; Markdown ``` fences (counter-based: name-group nil)
+(helixel-define-regex-textobj md-fence
+  "^```[^\n]*$" "^```[ \t]*$" nil 'block)
+(define-key helixel-textobj-inner-map "`" #'helixel-mark-inner-md-fence)
+(define-key helixel-textobj-outer-map "`" #'helixel-mark-a-md-fence)
+
+;; LaTeX \\begin{env} / \\end{env} (capture group 1 = environment name)
+(helixel-define-regex-textobj latex-env
+  "\\\\begin{\\([^}]+\\)}" "\\\\end{\\([^}]+\\)}" 1 'block)
+(define-key helixel-textobj-inner-map "e" #'helixel-mark-inner-latex-env)
+(define-key helixel-textobj-outer-map "e" #'helixel-mark-a-latex-env)
+```
+
+Arguments: `(NAME BEGIN-RE END-RE &optional NAME-GROUP SUBCAT)`.
+
+- **NAME**: a symbol for the command suffix (e.g. `latex-env` → `helixel-mark-inner-latex-env`)
+- **BEGIN-RE** / **END-RE**: regexps matching the opening/closing delimiter lines
+- **NAME-GROUP**: if an integer, that capture group in both regexps must match (name-based balancing). Use `nil` for counter-based balancing (e.g. markdown fences)
+- **SUBCAT**: subcategory symbol for `;` session grouping (default `'block`)
+
 ### Tree-sitter Text Objects
 
 Requires [evil-textobj-tree-sitter](https://github.com/meain/evil-textobj-tree-sitter)
