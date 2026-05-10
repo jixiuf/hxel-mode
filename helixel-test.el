@@ -3637,4 +3637,149 @@ The leading newline is part of content so mt adds newline only before close."
     ;; The tx sel should have count 2
     (should (= (plist-get (helixel-edit-sel helixel--last-tx) :count) 2))))
 
+;;; Jump navigation tests
+
+(ert-deftest helixel-test-jump-empty-list ()
+  "C-o with empty jump list says no positions."
+  (let ((helixel--jump-list nil)
+        (helixel--jump-pos nil)
+        (msg nil))
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (setq msg (apply #'format fmt args)))))
+      (with-temp-buffer
+        (helixel-jump-backward)
+        (should (string= msg "No jump positions"))))))
+
+(ert-deftest helixel-test-jump-forward-no-state ()
+  "C-i without prior C-o says at newest."
+  (let ((helixel--jump-list nil)
+        (helixel--jump-pos nil)
+        (msg nil))
+    (cl-letf (((symbol-function 'message)
+               (lambda (fmt &rest args)
+                 (setq msg (apply #'format fmt args)))))
+      (with-temp-buffer
+        (helixel-jump-forward)
+        (should (string= msg "At newest"))))))
+
+(ert-deftest helixel-test-jump-same-buffer-roundtrip ()
+  "C-o then C-i returns to original position."
+  (let ((helixel--jump-list nil)
+        (helixel--jump-pos nil))
+    (with-temp-buffer
+      (transient-mark-mode 1)
+      (insert "aaa bbb ccc ddd")
+      (goto-char 5)
+      (let ((orig (point)))
+        (helixel-register-jump 'goto 'test)
+        (goto-char 1)
+        (should (= (point) 1))
+        (helixel-jump-backward)
+        (should (= (point) orig))
+        (should helixel--jump-pos)
+        (helixel-jump-forward)
+        (should (= (point) 1))
+        (let ((msg nil))
+          (cl-letf (((symbol-function 'message)
+                     (lambda (fmt &rest args)
+                       (setq msg (apply #'format fmt args)))))
+            (helixel-jump-forward)
+            (should (string= msg "At newest"))))))))
+
+(ert-deftest helixel-test-jump-multiple-chaining ()
+  "Multiple C-o then multiple C-i chain correctly and stop at ends."
+  (let ((helixel--jump-list nil)
+        (helixel--jump-pos nil))
+    (with-temp-buffer
+      (transient-mark-mode 1)
+      (insert "aaa bbb ccc ddd eee fff")
+      (goto-char 1)
+      (helixel-register-jump 'search 'a)
+      (goto-char 5)
+      (helixel-register-jump 'find-char 'b)
+      (goto-char 9)
+      (helixel-register-jump 'goto 'c)
+      (goto-char 13)
+      (helixel-jump-backward)       ;; 13→9
+      (should (= (point) 9))
+      (helixel-jump-backward)       ;; 9→5
+      (should (= (point) 5))
+      (helixel-jump-backward)       ;; 5→1
+      (should (= (point) 1))
+      ;; At oldest
+      (let ((msg nil))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args)
+                     (setq msg (apply #'format fmt args)))))
+          (helixel-jump-backward)
+          (should (string= msg "At oldest"))))
+      ;; C-i chain back forward
+      (helixel-jump-forward)        ;; 1→5
+      (should (= (point) 5))
+      (helixel-jump-forward)        ;; 5→9
+      (should (= (point) 9))
+      (helixel-jump-forward)        ;; 9→13 (return point from first C-o)
+      (should (= (point) 13))
+      ;; At newest
+      (let ((msg nil))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args)
+                     (setq msg (apply #'format fmt args)))))
+          (helixel-jump-forward)
+          (should (string= msg "At newest")))))))
+
+(ert-deftest helixel-test-jump-no-infinite-loop ()
+  "Repeated C-i does not loop infinitely — it stops at newest."
+  (let ((helixel--jump-list nil)
+        (helixel--jump-pos nil))
+    (with-temp-buffer
+      (transient-mark-mode 1)
+      (insert "aaa bbb")
+      (goto-char 5)
+      (helixel-register-jump 'goto 'test)
+      (goto-char 1)
+      (helixel-jump-backward)
+      (should (= (point) 5))
+      (helixel-jump-forward)
+      (should (= (point) 1))
+      ;; Subsequent C-i should all say "At newest", not loop
+      (let ((count 0))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (fmt &rest args)
+                     (when (string= fmt "At newest")
+                       (cl-incf count)))))
+          (dotimes (_ 5)
+            (helixel-jump-forward)))
+        (should (= count 5))))))
+
+(ert-deftest helixel-test-jump-cross-buffer ()
+  "Cross-buffer C-o switches buffer and C-i returns."
+  (let ((helixel--jump-list nil)
+        (helixel--jump-pos nil)
+        (buf-a (generate-new-buffer "jump-test-a"))
+        (buf-b (generate-new-buffer "jump-test-b")))
+    (with-current-buffer buf-a
+      (insert "AAA BBB CCC")
+      (goto-char 5)
+      (helixel-register-jump 'goto 'test))
+    (with-current-buffer buf-b
+      (insert "XXX YYY ZZZ")
+      (goto-char 5))
+    (switch-to-buffer buf-b)
+    (should (eq (current-buffer) buf-b))
+    (helixel-jump-backward)
+    (should (eq (current-buffer) buf-a))
+    (should (= (point) 5))
+    (helixel-jump-forward)
+    (should (eq (current-buffer) buf-b))
+    (let ((msg nil))
+      (cl-letf (((symbol-function 'message)
+                 (lambda (fmt &rest args)
+                   (setq msg (apply #'format fmt args)))))
+        (helixel-jump-forward)
+        (should (string= msg "At newest"))))
+    (kill-buffer buf-a)
+    (kill-buffer buf-b)))
+
 ;;; helixel-test.el ends here

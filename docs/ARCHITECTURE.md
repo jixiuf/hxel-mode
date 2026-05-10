@@ -6,7 +6,7 @@
 |------|------|
 | `helixel.el` | Entry point: requires sub-modules, provides `helixel` feature |
 | `helixel-edit.el` | **Edit transaction model**: unified schema (`:op :sel :payload :marker`), builder, equality, display. No helixel deps — kernel module. |
-| `helixel-action.el` | Action infrastructure: ring API, `;` group-skipping. Stores edit txs in ring. Requires helixel-edit. |
+| `helixel-action.el` | Action infrastructure: ring API, `;` group-skipping, **global jump list** for `C-o`/`C-i` navigation. Stores edit txs in ring. Requires helixel-edit. |
 | `helixel-repeat.el` | Dot-repeat (`.`): recording (`helixel--record-edit` → `helixel--last-tx`), selection replay, execution dispatcher. Requires helixel-action, helixel-edit. |
 | `helixel-common.el` | State machine, keymaps, movement, editing commands, shared kill core. Requires helixel-action, helixel-textobj, helixel-repeat. |
 | `helixel-search.el` | Search & find-char engine + repeat context. Requires helixel-common. |
@@ -489,6 +489,101 @@ available, which `helixel-common.el` wires to `helixel-action-start`.
 ;; STATE: insert, normal, motion, visual, view, goto, window, space
 ;; MODE: major-mode symbol for mode-specific bindings
 ```
+
+---
+
+## Global Jump List (`C-o` / `C-i`)
+
+### Overview
+
+Analogous to Vim's jumplist — `C-o` jumps to older positions, `C-i` (Tab) jumps
+to newer positions.  Unlike `;` which only sets mark, jump commands **move point**
+and support **cross-buffer** navigation.
+
+The jump list is a **global** ring (`helixel--jump-list`) that mirrors the
+buffer-local action ring.  Every action committed via `helixel-action--ring-push`
+is also pushed to the jump list (filtered by `helixel-jump-categories`).
+
+### Entry Format
+
+```elisp
+(:marker   <marker>     ;; position in target buffer
+ :buffer   <buffer>     ;; which buffer this entry lives in
+ :category <symbol>     ;; movement | search | find-char | edit | goto | textobj | user
+ :subcat   <symbol>     ;; char | line | word | search | next | etc.)
+```
+
+### Keybindings
+
+| Key | Command | Behavior |
+|-----|---------|----------|
+| `C-o` | `helixel-jump-backward` | Jump to older entry, moving point |
+| `C-i` (Tab) | `helixel-jump-forward` | Jump to newer entry |
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `helixel-jump-list-max` | `100` | Max entries in the global jump list |
+| `helixel-jump-categories` | `(movement textobj search find-char edit goto user)` | Categories that are **recorded** into the jump list |
+| `helixel-jump-cycle-categories` | same as above | Categories visible during `C-o`/`C-i` cycling |
+
+Users can narrow `helixel-jump-cycle-categories` to exclude basic movements
+(e.g., keep only `search find-char edit goto`) for a tighter Vim-style jumplist
+while still recording everything for completeness.
+
+### Cross-Buffer Jumps
+
+When `C-o` or `C-i` switches to a different buffer, a **return entry**
+(`jump/return`) is automatically pushed so `C-i` can take you back.  This
+is handled internally by `helixel--jump-goto`.
+
+### Group-Skipping
+
+Same algorithm as `;` — consecutive entries with the same `(:category :subcat :buffer)`
+are collapsed into one jump target (the oldest of the group).  Buffer identity
+is included so entries in different buffers are never merged.
+
+### Selection Prevention
+
+When there is an active region in normal state, any non-helixel command
+(via `M-x`, `gd`, etc.) would extend the selection because the mark stays
+in place while point moves.  A `pre-command-hook` (`helixel--pre-command-clear-selection`)
+deactivates the mark before non-helixel commands run, preventing unintended
+selection extension.
+
+### Public API
+
+```elisp
+;; Push current point to jump list (for custom commands)
+(helixel-register-jump &optional category subcat)
+
+;; Add :before advice to a command to auto-register its start position
+(helixel-define-jump-command 'symbol)
+```
+
+### Hook
+
+```elisp
+(defvar helixel-jump-cleanup-function nil
+  "Function called after a successful C-o/C-i jump to clean up selection state.
+Set by helixel-common.el to `helixel--clear-data'.")
+```
+
+### Architecture
+
+```
+helixel--action-ring (buffer-local)          helixel--jump-list (global)
+         │                                           │
+         │  helixel-action--ring-push               │
+         │  ──────────────────────►                  │
+         │  (also pushes to jump list)               │
+         │                                           │
+    ; / C-u ;                                    C-o / C-i
+    (buffer-local, push-mark)                    (global, goto-char + switch-buffer)
+```
+
+---
 
 ## Test Conventions
 

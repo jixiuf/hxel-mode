@@ -108,6 +108,7 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
 (setq helixel-textobj-action-function #'helixel-action-start)
 (setq helixel-textobj-visual-state-p-function
       (lambda () (eq helixel--current-state 'visual)))
+(setq helixel-jump-cleanup-function #'helixel--clear-data)
 
 (defun helixel--unload-current-state ()
   "Deactivate the minor mode described by `helixel--current-state'."
@@ -975,6 +976,8 @@ Example with multiple callbacks:
     (define-key keymap "G" #'helixel-goto-line)
     (define-key keymap "%" #'mark-whole-buffer)
     (define-key keymap ";" #'helixel-action-cycle)
+    (define-key keymap (kbd "C-o") #'helixel-jump-backward)
+    (define-key keymap (kbd "C-i") #'helixel-jump-forward)
     (define-key keymap (kbd "C-f") #'helixel-scroll-up-command)
     (define-key keymap (kbd "C-b") #'helixel-scroll-down-command)
     (define-key keymap (kbd "1") (kbd "C-u 1"))
@@ -1312,6 +1315,23 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
         (buffer-list))
   (setq helixel-global-mode (if status status 1)))
 
+(defun helixel--pre-command-clear-selection ()
+  "Deactivate mark before non-helixel commands to prevent selection extension.
+Helixel commands (namespace `helixel-') and a few exceptions are
+allowed to handle the active selection themselves."
+  (when (and (boundp 'helixel--current-state)
+             (memq helixel--current-state '(normal motion))
+             (region-active-p))
+    (let ((name (symbol-name this-command)))
+      (unless (or (string-prefix-p "helixel-" name)
+                  ;; todo: defcustom
+                  (memq this-command '(keyboard-quit undo undo-redo
+                                       self-insert-command
+                                       digit-argument
+                                       negative-argument
+                                       universal-argument)))
+        (deactivate-mark t)))))
+
 ;;;###autoload
 (defun helixel-mode ()
   "Toggle global Helixel mode."
@@ -1324,6 +1344,7 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
         (advice-add #'keyboard-quit :before #'helixel--clear-data)
         (advice-add #'keyboard-quit :before #'helixel--cancel-action)
         (add-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)
+        (add-hook 'pre-command-hook #'helixel--pre-command-clear-selection)
         (helixel-mode-maybe-activate 1))
     (cond
      (helixel-normal-state (helixel-normal-state -1))
@@ -1332,7 +1353,13 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
      (helixel-visual-state (helixel-visual-state -1)))
     (advice-remove #'keyboard-quit #'helixel--clear-data)
     (advice-remove #'keyboard-quit #'helixel--cancel-action)
-    (remove-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)))
+    (remove-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)
+    (remove-hook 'pre-command-hook #'helixel--pre-command-clear-selection)))
+
+(helixel-define-jump-command 'xref-find-definitions)
+(helixel-define-jump-command 'xref-find-references)
+(helixel-define-jump-command 'eglot-find-typeDefinition)
+(helixel-define-jump-command 'eglot-find-implementation)
 
 (provide 'helixel-common)
 ;;; helixel-common.el ends here

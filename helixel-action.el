@@ -72,6 +72,45 @@ for cancel sentinels).  They remain in the ring for dedup purposes."
                   (const :tag "Edit" edit)))
   :group 'helixel)
 
+(defcustom helixel-jump-list-max 100
+  "Maximum number of entries in `helixel--jump-list'."
+  :type 'integer
+  :group 'helixel)
+
+(defcustom helixel-jump-categories
+  '(movement textobj search find-char edit goto user jump)
+  "Action :category symbols that are recorded into `helixel--jump-list'.
+Categories not listed here do not generate jump entries.
+See also `helixel-jump-cycle-categories' for controlling C-o/C-i visibility."
+  :type '(repeat (choice
+                  (const :tag "Movement" movement)
+                  (const :tag "Text object" textobj)
+                  (const :tag "Search" search)
+                  (const :tag "Find char" find-char)
+                  (const :tag "Edit" edit)
+                  (const :tag "Goto" goto)
+                  (const :tag "User" user)
+                  (const :tag "Jump return" jump)))
+  :group 'helixel)
+
+(defcustom helixel-jump-cycle-categories
+  '(movement textobj search find-char edit goto user jump)
+  "Action :category symbols visible during C-o/C-i cycling.
+Only categories listed here are shown when pressing C-o or C-i.
+Entries from other categories remain in `helixel--jump-list' but are skipped.
+This can be narrower than `helixel-jump-categories' to record everything
+while only navigating a subset."
+  :type '(repeat (choice
+                  (const :tag "Movement" movement)
+                  (const :tag "Text object" textobj)
+                  (const :tag "Search" search)
+                  (const :tag "Find char" find-char)
+                  (const :tag "Edit" edit)
+                  (const :tag "Goto" goto)
+                  (const :tag "User" user)
+                  (const :tag "Jump return" jump)))
+  :group 'helixel)
+
 ;; ── Buffer-local state ──
 
 (defvar-local helixel--action nil
@@ -111,6 +150,20 @@ Capped at `helixel-action-ring-max'.")
 
 (defvar-local helixel--action-pos nil
   "Ring position for `;' cycling: nil=live, 0=newest, 1=next, ...")
+
+;; ── Global jump list ──
+
+(defvar helixel--jump-list nil
+  "Global jump list for C-o / C-i navigation.  Most recent first.
+Each entry: (:marker MARKER :buffer BUFFER :category CAT :subcat SUBCAT)")
+
+(defvar helixel--jump-pos nil
+  "Current position in `helixel--jump-list' for C-o/C-i cycling.
+nil = not cycling.  0 = newest (list head).  N = older.")
+
+(defvar helixel-jump-cleanup-function nil
+  "Function called after a successful C-o/C-i jump to clean up selection state.
+Set by helixel-common.el.  Takes no arguments.  Typically `helixel--clear-data'.")
 
 ;; ── Accessor API ──
 ;;
@@ -212,7 +265,9 @@ Releases markers of evicted entries to prevent leaks."
   "Push ACTION to `helixel--action-ring' with deep-copy and dedup.
 Skips the push if the ring front already has identical key content
 \(same universal keys and same category sub-plists).
-Returns non-nil if the push actually happened."
+Returns non-nil if the push actually happened.
+Also pushes to `helixel--jump-list' if the category is in
+`helixel-jump-categories'."
   (when action
     (let ((entry (copy-tree action))
           (dup (car helixel--action-ring)))
@@ -225,7 +280,51 @@ Returns non-nil if the push actually happened."
       (unless (and dup (helixel-action--same-content-p dup entry))
         (push entry helixel--action-ring)
         (helixel-action--ring-cap)
+        (helixel--jump-list-push (copy-tree entry))
         t))))
+
+;; ── Jump list push ──
+
+(defun helixel--jump-list-push (action)
+  "Push ACTION to the global `helixel--jump-list' with buffer context.
+Deduplicates against the jump list front based on same content and buffer.
+Caps at `helixel-jump-list-max'.
+Only pushes if ACTION's :category is in `helixel-jump-categories'.
+Creates its own marker copy so the jump list entry is independent
+of the action-ring entry."
+  (when (and action (memq (plist-get action :category) helixel-jump-categories))
+    (let* ((src-m (plist-get action :marker))
+           (buf (or (when (markerp src-m) (marker-buffer src-m))
+                    (current-buffer)))
+           (m (if (markerp src-m)
+                  (copy-marker src-m (marker-insertion-type src-m))
+                src-m))
+           (entry `(:marker ,m
+                    :buffer ,buf
+                    :category ,(plist-get action :category)
+                    :subcat ,(plist-get action :subcat))))
+      (unless (helixel--jump-same-content-p entry (car helixel--jump-list))
+        (push entry helixel--jump-list)
+        (setq helixel--jump-pos nil)
+        (when (> (length helixel--jump-list) helixel-jump-list-max)
+          (let ((tail (nthcdr helixel-jump-list-max helixel--jump-list)))
+            (dolist (e tail)
+              (let ((em (plist-get e :marker)))
+                (when (markerp em) (set-marker em nil)))))
+          (setcdr (nthcdr (1- helixel-jump-list-max) helixel--jump-list) nil))))))
+
+(defun helixel--jump-same-content-p (a b)
+  "Return non-nil if jump entries A and B have identical content.
+Compares :buffer, :category, :subcat, and marker position."
+  (and a b
+       (eq (plist-get a :buffer) (plist-get b :buffer))
+       (eq (plist-get a :category) (plist-get b :category))
+       (equal (plist-get a :subcat) (plist-get b :subcat))
+       (let ((m1 (plist-get a :marker))
+             (m2 (plist-get b :marker)))
+         (if (and (markerp m1) (markerp m2))
+             (= (marker-position m1) (marker-position m2))
+           t))))
 
 ;; ── Ring commit ──
 
@@ -266,7 +365,7 @@ and \"cat.subcat\" for other actions."
       (let* ((sub (plist-get action :search))
              (dir (plist-get sub :dir))
              (pat (plist-get sub :pattern))
-             (c (if (eq dir 'backward) ?? ?/)))
+              (c (if (eq dir 'backward) ?\? ?/)))
         (format "%c%s%c" c pat c)))
      ((eq cat 'find-char)
       (let* ((sub (plist-get action :find-char))
@@ -479,6 +578,189 @@ same-type command won't be dedup'd against the previous session."
   ;; Not visible in `;' cycling (state ∉ cycle-categories).
   (helixel-action--ring-push
    `(:category state :subcat cancel :marker ,(point-marker))))
+
+;; ── Jump list public API ──
+
+(defun helixel-register-jump (&optional category subcat)
+  "Register current point as a jump position in `helixel--jump-list'.
+CATEGORY defaults to 'user, SUBCAT defaults to 'jump.
+Call this from any command to make its start position reachable via C-o/C-i."
+  (let ((cat (or category 'user))
+        (sub (or subcat 'jump)))
+    (let ((action `(:category ,cat
+                    :subcat ,sub
+                    :marker ,(point-marker))))
+      (helixel--jump-list-push action))))
+
+(defun helixel-define-jump-command (symbol)
+  "Mark SYMBOL as a jump command.
+Adds :before advice to call `helixel-register-jump' before SYMBOL runs,
+so its position is automatically recorded in the jump list.
+Also deactivates the mark so xref's (unless (region-active-p) (push-mark ...))
+fires correctly instead of silently skipping when a region is active.
+The advice is named `helixel-jump--before' on SYMBOL."
+  (advice-add symbol :before
+              (lambda (&rest _)
+                (deactivate-mark t)
+                (helixel-register-jump 'goto 'jump))
+              '((name . helixel-jump--before))))
+
+;; ── Jump list display ──
+
+(defun helixel--jump-display (action)
+  "Format jump entry ACTION for display during C-o/C-i cycling."
+  (let ((cat (plist-get action :category))
+        (sub (plist-get action :subcat))
+        (buf (plist-get action :buffer)))
+    (format "%s.%s [%s]"
+            (or cat ?\?)
+            (or sub ?\?)
+            (if (buffer-live-p buf)
+                (buffer-name buf)
+              "(dead)"))))
+
+;; ── Jump cycle helpers ──
+
+(defun helixel--jump-visible-p (action)
+  "Return non-nil if ACTION is visible during C-o/C-i cycling.
+An entry is visible if its :category is in `helixel-jump-cycle-categories'
+and its marker/buffer are still alive."
+  (and (memq (plist-get action :category) helixel-jump-cycle-categories)
+       (let ((m (plist-get action :marker))
+             (buf (plist-get action :buffer)))
+         (and (markerp m) (marker-buffer m) (buffer-live-p buf)))))
+
+(defun helixel--jump-same-group-p (a b)
+  "Return non-nil if A and B belong to the same jump group.
+Same group = same :category, :subcat, and :buffer."
+  (and a b
+       (eq (plist-get a :category) (plist-get b :category))
+       (eq (plist-get a :subcat) (plist-get b :subcat))
+       (eq (plist-get a :buffer) (plist-get b :buffer))))
+
+(defun helixel--jump-group-start (pos)
+  "Return the oldest (largest) index of the consecutive group containing POS.
+Entries at POS, POS+1, ... with same group form the group."
+  (let ((len (length helixel--jump-list)))
+    (while (and (< (1+ pos) len)
+                (helixel--jump-same-group-p
+                 (nth pos helixel--jump-list)
+                 (nth (1+ pos) helixel--jump-list)))
+      (cl-incf pos))
+    pos))
+
+(defun helixel--jump-group-newest (pos)
+  "Return the newest (smallest) index of the consecutive group containing POS."
+  (while (and (> pos 0)
+              (helixel--jump-same-group-p
+               (nth pos helixel--jump-list)
+               (nth (1- pos) helixel--jump-list)))
+    (cl-decf pos))
+  pos)
+
+(defun helixel--jump-visible-count ()
+  "Count visible entries in `helixel--jump-list'."
+  (cl-loop for a in helixel--jump-list
+           when (helixel--jump-visible-p a)
+           count 1))
+
+(defun helixel--jump-visible-index (pos)
+  "Return index of first visible entry starting at POS, or nil."
+  (cl-loop for i from pos below (length helixel--jump-list)
+           when (helixel--jump-visible-p (nth i helixel--jump-list))
+           return i))
+
+(defun helixel--jump-find (pos direction)
+  "Find index of next visible entry from POS in DIRECTION.
+DIRECTION: +1 = older, -1 = newer.  Returns the index or nil."
+  (let ((len (length helixel--jump-list)))
+    (cl-loop for i from (+ pos direction) by direction
+             while (if (> direction 0) (< i len) (>= i 0))
+             when (helixel--jump-visible-p (nth i helixel--jump-list))
+             return i)))
+
+(defun helixel--jump-message (pos)
+  "Format and message the current jump position."
+  (let* ((action (nth pos helixel--jump-list))
+         (total (helixel--jump-visible-count))
+         (display-pos (1+ (cl-loop for i from 0 below pos
+                                   count (helixel--jump-visible-p
+                                          (nth i helixel--jump-list))))))
+    (message "[%d/%d] %s" display-pos total
+             (helixel--jump-display action))))
+
+(defun helixel--jump-goto (pos)
+  "Go to the group-start of jump entry at POS in `helixel--jump-list'.
+Moves point, switching buffers if needed.
+Returns non-nil on success.
+If the group-start entry is dead, walks back to the last alive entry
+in the same group."
+  (let* ((gpos (helixel--jump-group-start pos))
+         (action (nth gpos helixel--jump-list)))
+    (while (and (not (helixel--jump-visible-p action))
+                (> gpos 0)
+                (helixel--jump-same-group-p
+                 (nth (1- gpos) helixel--jump-list) action))
+      (cl-decf gpos)
+      (setq action (nth gpos helixel--jump-list)))
+    (let ((buf (plist-get action :buffer))
+          (m (plist-get action :marker)))
+      (when (and (markerp m) (marker-buffer m) (buffer-live-p buf))
+        (let ((cross-buffer (not (eq buf (current-buffer)))))
+          (setq helixel--jump-pos gpos)
+          (when cross-buffer
+            (switch-to-buffer buf))
+          (goto-char (marker-position m))
+          (when (functionp helixel-jump-cleanup-function)
+            (funcall helixel-jump-cleanup-function))
+          t)))))
+
+;; ── C-o / C-i commands ──
+
+(defun helixel-jump-backward ()
+  "Jump to the previous (older) position in the global jump list.
+Moves point to the recorded position, switching buffers if needed.
+Pushes a return entry so C-i can navigate forward to the starting point.
+Bound to C-o in normal mode."
+  (interactive)
+  (let* ((pre-pos helixel--jump-pos)
+         (saved-pos pre-pos))
+    (helixel-register-jump 'jump 'return)
+    (setq helixel--jump-pos (if saved-pos (1+ saved-pos) nil))
+    (let* ((start (if helixel--jump-pos helixel--jump-pos 0))
+           (pos (helixel--jump-find start 1))
+           (found nil))
+      (while pos
+        (if (helixel--jump-goto pos)
+            (setq found t pos nil)
+          (setq helixel--jump-pos pos
+                pos (helixel--jump-find pos 1))))
+      (unless found
+        (message (if helixel--jump-pos "At oldest" "No jump positions"))))))
+
+(defun helixel-jump-forward ()
+  "Jump to the next (newer) position in the global jump list.
+Moves point to the recorded position, switching buffers if needed.
+Bound to C-i in normal mode."
+  (interactive)
+  (if helixel--jump-pos
+      (let ((newest (helixel--jump-group-newest helixel--jump-pos))
+            (pos nil))
+        (while (and (not pos)
+                    (> newest 0))
+          (setq pos (cl-loop for i from (1- newest) downto 0
+                             when (helixel--jump-visible-p
+                                   (nth i helixel--jump-list))
+                             return i))
+          (when pos
+            (let ((success (helixel--jump-goto pos)))
+              (unless success
+                (setq helixel--jump-pos pos
+                      newest pos
+                      pos nil)))))
+        (unless pos
+          (message "At newest")))
+    (message "At newest")))
 
 (provide 'helixel-action)
 ;;; helixel-action.el ends here

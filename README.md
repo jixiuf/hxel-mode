@@ -32,6 +32,7 @@ Requires Emacs >= 29.1.
 | `m s` `m t` | Surround add / add tag |
 | `m d` `m r` | Surround delete / replace |
 | `;` | Set mark to previous session start |
+| `C-o` `C-i` | Jump to older / newer position (global, cross-buffer) |
 | `M-.` | Repeat last find-char |
 | `n` `N` | Repeat / reverse direction repeat (`C-u n` pick from history) |
 | `.` | Repeat last edit (kill, change, paste, insert, ...) |
@@ -258,6 +259,56 @@ C-g         cancel session — next command starts fresh
 w           new session, new start position
 ;           mark start of this new w
 ;           again: mark start of the old w w
+```
+
+### Jump Navigation (`C-o` / `C-i`)
+
+`C-o` jumps to older positions in the global jump list, `C-i` jumps to newer
+ones.  Unlike `;` which only sets the mark, jump commands **move point** and
+support **cross-buffer** navigation.
+
+Every action recorded for `;` (movement, search, find-char, textobj, edit) is
+also recorded in the jump list.  The same session types and group-skipping
+logic apply.
+
+| Key | Behavior |
+|-----|----------|
+| `C-o` | Jump to the previous (older) position, switching buffers if needed |
+| `C-i` | Jump to the next (newer) position |
+| `C-o` (at oldest) | "At oldest" — no more positions |
+| `C-i` (at newest) | "At newest" — no more positions |
+
+Cross-buffer: when a jump takes you to a different buffer, a return point is
+automatically recorded so `C-i` brings you back.
+
+#### Registering jump commands
+
+External commands like `xref-find-definitions` (`g d`) automatically register
+their start position via advice.  To register your own commands:
+
+```elisp
+;; Method 1: one line — adds :before advice
+(helixel-define-jump-command 'my-goto-command)
+
+;; Method 2: call from inside your command body
+(defun my-command ()
+  (interactive)
+  (helixel-register-jump 'goto 'my-cmd)
+  ...)
+```
+
+#### Configuration
+
+```elisp
+;; Max entries in the global jump list (default 100)
+(setq helixel-jump-list-max 200)
+
+;; Categories that are recorded (default: all)
+(setq helixel-jump-categories '(movement search find-char edit goto))
+
+;; Categories visible during C-o / C-i cycling (default: same as above)
+;; Narrow this to exclude basic movements for a tighter jumplist:
+(setq helixel-jump-cycle-categories '(search find-char edit goto))
 ```
 
 ### Ex Commands
