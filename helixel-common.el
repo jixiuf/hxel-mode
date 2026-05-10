@@ -1233,7 +1233,14 @@ are bound to self-insert commands, use `normal', otherwise `motion'."
                  (when (derived-mode-p (car cell))
                    (cdr cell)))
                helixel-major-mode-default-states)
-      (let* ((letters (split-string "abcdefghijklmnopqrstuvwxyz" "" t))
+      (let* ((state-modes (mapcar #'cdr helixel-state-alist))
+             (minor-mode-map-alist
+              (cl-remove-if (lambda (x) (memq (car x) state-modes))
+                            minor-mode-map-alist))
+             (minor-mode-overriding-map-alist
+              (cl-remove-if (lambda (x) (memq (car x) state-modes))
+                            minor-mode-overriding-map-alist))
+             (letters (split-string "abcdefghijklmnopqrstuvwxyz" "" t))
              (any-self-insert (cl-some (lambda (letter)
                                          (helixel--is-self-insert-p
                                           (key-binding letter)))
