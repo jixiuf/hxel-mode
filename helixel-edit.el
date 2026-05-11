@@ -113,17 +113,29 @@ Returns t when both are nil (non-edit actions are equal for dedup)."
 ;; ---------------------------------------------------------------------------
 ;; Display — for action ring history and completion
 
+(cl-defgeneric helixel-sel-display (kind ctx)
+  "Return a short human-readable string describing selection CTX of KIND.
+Methods specialise on KIND via `(eql SYMBOL)'.  Used by
+`helixel-edit-display' for action-history rendering.  Default returns
+the symbol-name of KIND.")
+
+(cl-defmethod helixel-sel-display (kind _ctx)
+  "Default: just the kind symbol's name."
+  (symbol-name kind))
+
 (defun helixel-edit-display (tx)
   "Return a short display string for transaction TX.
-Format: operator label, optionally suffixed with selection kind.
-Labels come from the op registry's :display field."
+Format: OP[.SEL][xCOUNT].  Op label and sel label are pluggable
+(see `helixel-edit-op-display' and `helixel-sel-display')."
   (let* ((op (helixel-edit-op tx))
          (sel (helixel-edit-sel tx))
-         (op-str (helixel-edit-op-display op))
-         (sel-kind (plist-get sel :kind)))
-    (if sel-kind
-        (format "%s.%s" op-str sel-kind)
-      op-str)))
+         (op-str (helixel-edit-op-display op tx))
+         (sel-kind (plist-get sel :kind))
+         (sel-str (when sel-kind (helixel-sel-display sel-kind sel)))
+         (count (plist-get sel :count)))
+    (concat op-str
+            (when sel-str (concat "." sel-str))
+            (when (and count (> count 1)) (format "x%d" count)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Payload helpers
@@ -168,10 +180,15 @@ OP is an unquoted symbol; PROPS is a keyword plist."
   "Return the runner function registered for OP, or nil."
   (plist-get (gethash op helixel-edit--op-registry) :runner))
 
-(defun helixel-edit-op-display (op)
-  "Return display label for OP.  Falls back to symbol-name when unset."
-  (or (plist-get (gethash op helixel-edit--op-registry) :display)
-      (symbol-name op)))
+(defun helixel-edit-op-display (op &optional tx)
+  "Return display label for OP.
+The registry's :display field may be a string or a function (TX -> STRING).
+Falls back to symbol-name when unset."
+  (let ((d (plist-get (gethash op helixel-edit--op-registry) :display)))
+    (cond
+     ((stringp d) d)
+     ((functionp d) (or (funcall d tx) (symbol-name op)))
+     (t (symbol-name op)))))
 
 (defun helixel-edit-operator-p (op)
   "Return non-nil if OP is a registered edit operator."

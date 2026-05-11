@@ -2008,5 +2008,11 @@ accepts a single optional COUNT argument."
   (when-let* ((cmd (plist-get ctx :command)))
     (funcall cmd (or (plist-get ctx :count) 1))))
 
+(cl-defmethod helixel-sel-display ((_kind (eql textobj)) ctx)
+  "Render textobj as the command name with its `helixel-mark-' prefix stripped."
+  (if-let* ((cmd (plist-get ctx :command)))
+      (replace-regexp-in-string "^helixel-mark-" "" (symbol-name cmd))
+    "textobj"))
+
 (provide 'helixel-textobj)
 ;;; helixel-textobj.el ends here
