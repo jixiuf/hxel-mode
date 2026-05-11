@@ -185,5 +185,29 @@ The chosen entry becomes the new `helixel--last-tx'."
       (setq helixel--last-tx tx)
       (helixel-repeat-edit))))
 
+(defun helixel-repeat-debug ()
+  "Pretty-print `helixel--last-tx' and the head of `helixel--edit-ring'.
+Intended for development — inspect what dot-repeat would replay next."
+  (interactive)
+  (require 'pp)
+  (let ((buf (get-buffer-create "*helixel-repeat-debug*")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (emacs-lisp-mode)
+        (insert ";; helixel--last-tx (display: "
+                (or (and helixel--last-tx
+                         (helixel-edit-display helixel--last-tx))
+                    "<none>")
+                ")\n")
+        (pp helixel--last-tx (current-buffer))
+        (insert "\n;; helixel--edit-ring ("
+                (number-to-string (length helixel--edit-ring))
+                " entries):\n")
+        (dolist (tx helixel--edit-ring)
+          (insert (format ";;   %s\n" (helixel-edit-display tx))))
+        (goto-char (point-min))))
+    (display-buffer buf)))
+
 (provide 'helixel-repeat)
 ;;; helixel-repeat.el ends here
