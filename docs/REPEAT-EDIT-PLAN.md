@@ -1,36 +1,87 @@
 # Repeat Edit — Implementation History & Roadmap
 
-## Current Status (2026-05-08)
+## Current Status (2026-05-12)
 
-**Completed**: Phases 1–11, all 258 tests passing.
-**Architecture**: Transaction-driven — single schema shared by repeat, action ring, and edit commands.
+**Completed**: Phases 1–11 (initial transaction-driven design) +
+Phases 12–18 (descriptor + registry refactor).  All 322 tests passing.
+**Architecture**: Transaction-driven, fully data-described, with
+pluggable selection-recreation and op-runner registries.
 
 ## Module Structure
 
 ```
 helixel.el
-├── helixel-edit.el     (kernel: tx schema — :op :sel :payload :marker)
-├── helixel-action.el   (ring, ; group-skipping → stores tx in :edit)
-├── helixel-repeat.el   (. infrastructure — last-tx, record-edit, execute-edit)
-├── helixel-common.el   (state machine, editing commands, shared kill core)
+├── helixel-edit.el     (kernel: tx schema + sel/op registries, no deps)
+├── helixel-action.el   (action ring, `;' jumping; consumes tx)
+├── helixel-repeat.el   (`.', count prefix, edit ring, picker, debug)
+├── helixel-common.el   (state machine, edit cmds; registers ops + sel kinds)
 ├── helixel-search.el   (search/find-char, n/N repeat context)
-└── helixel-textobj.el  (text objects, hooks-based decoupling)
+├── helixel-textobj.el  (text objects; registers `textobj' sel kind)
+└── helixel-surround.el (registers `surround' sel kind + ms/mt/md/mr ops)
 ```
 
 Dependency chain (one-way, no cycles):
 ```
 helixel-edit  →  helixel-action  →  helixel-repeat  →  helixel-common
-   (kernel)       (ring + ;)        (. dispatch)       (commands)
-```
-helixel.el
-  ├── helixel-action.el  (ring, ; group-skipping, edit category)
-  ├── helixel-repeat.el  (NEW: . infrastructure — recording, sel-ctx, replay)
-  ├── helixel-common.el  (state machine, editing commands, movements, keymaps)
-  ├── helixel-search.el  (search/find-char, n/N repeat context)
-  └── helixel-textobj.el (text objects, hooks-based decoupling)
+   (kernel)       (ring + ;)        (. dispatch)       (commands + ops)
 ```
 
-## Completed Phases
+`helixel-repeat.el` no longer references any specific operator or
+selection kind — dispatch is purely table-driven.
+
+## Architecture Summary
+
+```
+selection cmd → helixel--repeat-sel-ctx  (a selection descriptor plist)
+  ↓
+edit cmd      → helixel--record-edit(op, &rest payload)
+  ↓
+helixel-edit-make → tx (:op :sel :payload :marker)
+  ↓
+helixel--last-tx = tx                 (dot-repeat head)
+helixel--edit-ring = (tx ... )        (per-buffer history, deduped)
+helixel--live-edit-set(tx)            (action ring — ; jumping)
+  ↓
+. (count) → helixel-repeat-edit
+  → helixel-sel-recreate(:kind ctx)  ;; cl-defgeneric, per-kind methods
+  → helixel-edit-op-runner(:op)      ;; op registry, registered per module
+```
+
+Extension points (zero kernel edits required):
+- `helixel-edit-defop NAME :runner FN :display LABEL/FN`
+- `cl-defmethod helixel-sel-recreate ((_kind (eql K)) ctx) ...)`
+- `cl-defmethod helixel-sel-display  ((_kind (eql K)) ctx) ...)`
+
+## Refactor Phases (2026-05-12)
+
+| # | What | Files |
+|---|------|-------|
+| 12 | `cl-defgeneric helixel-sel-recreate`; line/rect/movement methods. | edit, repeat, common |
+| 13 | Surround `:sel` becomes pure data `(:kind surround :delimiter D)`; fixes the latent `:fn helixel-surround-add` re-prompt bug. | surround |
+| 14 | Textobj `:sel` becomes `(:kind textobj :command S :count N [:delimiter D])`; legacy `:fn` fallback removed. | textobj, edit, common |
+| 15 | Op registry replaces 60-line pcase; runners self-register in owning modules; `helixel-repeat.el` shrinks 225→145 lines, all `declare-function` noise removed. | edit, repeat, common, surround |
+| 16 | `.` accepts numeric prefix; replay wrapped in `condition-case` so failure does not discard `helixel--last-tx`. | repeat |
+| 16b | **Bug fix**: `helixel-insert-exit` was discarding `plist-put` return on a possibly-nil payload, so `c<text><esc>.` replayed an empty change.  Added `helixel-edit-with-payload` immutable setter; end-to-end tests for change and insert. | edit, common |
+| 17 | Pluggable display: `:display` may be a function; new `helixel-sel-display` cl-defgeneric; per-kind/per-op rich labels (e.g. `R[Q]`, `d.inner-word`, `c.Lx3`, `mr[)]`). | edit, repeat, common, textobj, surround |
+| 17b | Edit ring (`helixel--edit-ring`, `helixel-edit-ring-max=64`, head dedup) + `helixel-repeat-edit-pick` completing-read picker. | repeat |
+| 18 | Housekeeping: `helixel--inhibit-action-track` moves to its rightful home (`helixel-action.el`); commentary refreshed; `helixel-repeat-debug` for inspection; checkdoc clean. | action, common, repeat, edit, surround, textobj |
+
+## Future Work
+
+- **Edit register integration**: `"a.` / `"ay` to name and recall edits.
+- **Persistence**: serialise `helixel--edit-ring` to `desktop` (now
+  feasible since descriptors are pure data).
+- **Yank-pop UX for `.`**: `M-.` after `.` rotates to the previous ring
+  entry, undoing & re-applying à la `yank-pop`.
+- **Change replay mode**: choose between `text` (current; insert stored
+  string) and `keys` (re-execute key sequence so abbrev / yasnippet /
+  electric indent fire again).
+- **Cross-buffer repeat**: ring is currently buffer-local.
+
+---
+
+## Historical Phases (pre-refactor)
+
 
 ### Phase 1 — Remove dedup from action-start, add `;` group-skipping
 - `helixel-action-start` now always pushes old action, always creates fresh marker
