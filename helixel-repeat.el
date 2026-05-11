@@ -130,16 +130,23 @@ Dispatches via the op registry in `helixel-edit'."
 ;; ---------------------------------------------------------------------------
 ;; Replay (bound to `.`)
 
-(defun helixel-repeat-edit ()
-  "Repeat the last editing operation at point (bound to `.`)."
-  (interactive)
+(defun helixel-repeat-edit (&optional count)
+  "Repeat the last editing operation at point (bound to `.`).
+With numeric prefix COUNT, replay COUNT times.
+Failure during replay is reported but does not discard the stored edit."
+  (interactive "p")
   (unless helixel--last-tx
     (user-error "No previous edit to repeat"))
   (let ((tx helixel--last-tx)
         (helixel--inhibit-repeat-record t)
-        (helixel--inhibit-action-track t))
-    (helixel--recreate-selection (helixel-edit-sel tx))
-    (helixel--execute-edit tx)))
+        (helixel--inhibit-action-track t)
+        (n (or count 1)))
+    (condition-case err
+        (dotimes (_ n)
+          (helixel--recreate-selection (helixel-edit-sel tx))
+          (helixel--execute-edit tx))
+      ((error quit)
+       (message "helixel-repeat-edit aborted: %s" (error-message-string err))))))
 
 (provide 'helixel-repeat)
 ;;; helixel-repeat.el ends here
