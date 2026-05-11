@@ -35,7 +35,7 @@ Requires Emacs >= 29.1.
 | `C-o` `C-i` | Jump to older / newer position (global, cross-buffer) |
 | `M-.` | Repeat last find-char |
 | `n` `N` | Repeat / reverse direction repeat (`C-u n` pick from history) |
-| `.` | Repeat last edit (kill, change, paste, insert, ...) |
+| `.` | Repeat last edit (kill, change, paste, insert, ...).  Numeric prefix replays N times.  `M-x helixel-repeat-edit-pick` chooses an older edit from the per-buffer ring (`M-x helixel-repeat-debug` to inspect). |
 | `i` `a` `I` `A` `o` `O` | Enter insert mode |
 | `v` | Enter visual mode |
 | `d` `c` `y` `r` `R` | Edit: delete, change, copy, replace, replace-char |
