@@ -36,6 +36,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'helixel-action)
 (require 'helixel-edit)
 (require 'helixel-delimiter)
@@ -73,7 +74,32 @@ Built by `helixel-edit-make', stored by `helixel--record-edit-tx'.
 Replace `helixel--last-edit' — unified schema shared by repeat,
 action ring, and edit commands.
 
-See `helixel-edit.el' for the full transaction schema.")
+Mirrors `(car helixel--edit-ring)'.  See `helixel-edit.el' for the
+full transaction schema.")
+
+(defcustom helixel-edit-ring-max 64
+  "Maximum number of past edit transactions retained in the ring.
+Older entries are discarded.  Set to 0 or nil to disable the ring
+(`helixel--last-tx' still works)."
+  :type 'integer
+  :group 'helixel)
+
+(defvar-local helixel--edit-ring nil
+  "List of recent edit transactions, newest first.
+`helixel--last-tx' is always `eq' to `(car helixel--edit-ring)'
+while both are non-nil.  Maintained by `helixel--edit-ring-push'.")
+
+(defun helixel--edit-ring-push (tx)
+  "Push TX onto the edit ring, deduplicating against the current head.
+Trims to `helixel-edit-ring-max'."
+  (when tx
+    (unless (and helixel--edit-ring
+                 (helixel-edit-equal-p tx (car helixel--edit-ring)))
+      (push tx helixel--edit-ring)
+      (when (and helixel-edit-ring-max
+                 (> (length helixel--edit-ring) helixel-edit-ring-max))
+        (setcdr (nthcdr (1- helixel-edit-ring-max) helixel--edit-ring)
+                nil)))))
 
 (defvar-local helixel--change-track-marker nil
   "Marker at position before entering insert during a change/insert operation.
@@ -92,8 +118,9 @@ Also bound in compound commands (e.g. `helixel-replace' calling
 (defun helixel--record-edit (operator &rest extra)
   "Record edit OPERATOR with current selection context and EXTRA payload.
 Consumes `helixel--repeat-sel-ctx'.  Builds a transaction via
-`helixel-edit-make' and stores it as `helixel--last-tx'.
-Also pushes an edit action to the ring for `;' jumping.
+`helixel-edit-make', pushes it onto `helixel--edit-ring', and stores
+it as `helixel--last-tx'.  Also notifies the action ring so `;'
+jumping picks up the new edit.
 
 NOTE: Caller is responsible for calling `helixel-action-start' first.
 The `helixel-define-command' macro handles this automatically."
@@ -102,6 +129,7 @@ The `helixel-define-command' macro handles this automatically."
                      helixel--repeat-sel-ctx extra)))
       (setq helixel--repeat-sel-ctx nil
             helixel--last-tx tx)
+      (helixel--edit-ring-push tx)
       (helixel--live-edit-set tx)
       (helixel-action-commit))))
 
@@ -147,6 +175,23 @@ Failure during replay is reported but does not discard the stored edit."
           (helixel--execute-edit tx))
       ((error quit)
        (message "helixel-repeat-edit aborted: %s" (error-message-string err))))))
+
+(defun helixel-repeat-edit-pick ()
+  "Choose a past edit from `helixel--edit-ring' and replay it.
+The chosen entry becomes the new `helixel--last-tx'."
+  (interactive)
+  (unless helixel--edit-ring
+    (user-error "Edit ring is empty"))
+  (let* ((items (cl-loop for tx in helixel--edit-ring
+                         for i from 0
+                         collect (cons (format "%3d  %s" i
+                                               (helixel-edit-display tx))
+                                       tx)))
+         (choice (completing-read "Repeat edit: " items nil t))
+         (tx (cdr (assoc choice items))))
+    (when tx
+      (setq helixel--last-tx tx)
+      (helixel-repeat-edit))))
 
 (provide 'helixel-repeat)
 ;;; helixel-repeat.el ends here
