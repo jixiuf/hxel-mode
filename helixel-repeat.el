@@ -40,6 +40,8 @@
 (require 'helixel-edit)
 (require 'helixel-delimiter)
 
+(defvar helixel--inhibit-action-track)
+
 ;; ---------------------------------------------------------------------------
 ;; Selection Context (helixel--repeat-sel-ctx)
 ;;
@@ -93,13 +95,15 @@ Also bound in compound commands (e.g. `helixel-replace' calling
   "Record edit OPERATOR with current selection context and EXTRA payload.
 Consumes `helixel--repeat-sel-ctx'.  Builds a transaction via
 `helixel-edit-make' and stores it as `helixel--last-tx'.
-Also pushes an edit action to the ring for `;' jumping."
+Also pushes an edit action to the ring for `;' jumping.
+
+NOTE: Caller is responsible for calling `helixel-action-start' first.
+The `helixel-define-command' macro handles this automatically."
   (unless helixel--inhibit-repeat-record
     (let ((tx (apply #'helixel-edit-make operator
                      helixel--repeat-sel-ctx extra)))
       (setq helixel--repeat-sel-ctx nil
             helixel--last-tx tx)
-      (helixel-action-start 'edit operator)
       (helixel--live-edit-set tx)
       (helixel-action-commit))))
 
@@ -212,7 +216,8 @@ Maps :op to the appropriate execution function."
   (unless helixel--last-tx
     (user-error "No previous edit to repeat"))
   (let ((tx helixel--last-tx)
-        (helixel--inhibit-repeat-record t))
+        (helixel--inhibit-repeat-record t)
+        (helixel--inhibit-action-track t))
     (helixel--recreate-selection (helixel-edit-sel tx))
     (helixel--execute-edit tx)))
 

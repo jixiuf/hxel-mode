@@ -161,17 +161,13 @@ HAD-REGION is non-nil if there was a region before the search."
 ;; ---------------------------------------------------------------------------
 ;; / ?  — prompt isearch-regexp
 
-(defun helixel-search-forward ()
-  "Prompt for a regexp and search forward."
-  (interactive)
-  (helixel-action-start 'search 'search)
+(helixel-define-command helixel-search-forward
+  (:category search :subcat search :clear-highlights nil)
   (add-hook 'isearch-mode-end-hook #'helixel-search--done-hook 0 t)
   (call-interactively #'isearch-forward-regexp))
 
-(defun helixel-search-backward ()
-  "Prompt for a regexp and search backward."
-  (interactive)
-  (helixel-action-start 'search 'search)
+(helixel-define-command helixel-search-backward
+  (:category search :subcat search :clear-highlights nil)
   (add-hook 'isearch-mode-end-hook #'helixel-search--done-hook 0 t)
   (call-interactively #'isearch-backward-regexp))
 
@@ -229,16 +225,12 @@ If there is a single-line region, use it; otherwise use the symbol at point."
        text (mapconcat #'isearch-text-char-description text "")))
     (isearch-exit)))
 
-(defun helixel-search-at-point-next ()
-  "Search forward for the symbol at point."
-  (interactive)
-  (helixel-action-start 'search 'search)
+(helixel-define-command helixel-search-at-point-next
+  (:category search :subcat search :clear-highlights nil)
   (helixel-search--at-point 1))
 
-(defun helixel-search-at-point-prev ()
-  "Search backward for the symbol at point."
-  (interactive)
-  (helixel-action-start 'search 'search)
+(helixel-define-command helixel-search-at-point-prev
+  (:category search :subcat search :clear-highlights nil)
   (helixel-search--at-point -1))
 
 ;; ---------------------------------------------------------------------------

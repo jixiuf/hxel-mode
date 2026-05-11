@@ -165,6 +165,11 @@ nil = not cycling.  0 = newest (list head).  N = older.")
   "Function called after a successful C-o/C-i jump to clean up selection state.
 Set by helixel-common.el.  Takes no arguments.  Typically `helixel--clear-data'.")
 
+(defvar helixel-action-push-functions nil
+  "Abnormal hook run after an action is pushed to `helixel--action-ring'.
+Each function is called with one argument, the action plist.
+The jump-list subsystem subscribes here to mirror actions globally.")
+
 ;; ── Accessor API ──
 ;;
 ;; External code (search, common) must use these instead of raw
@@ -280,7 +285,7 @@ Also pushes to `helixel--jump-list' if the category is in
       (unless (and dup (helixel-action--same-content-p dup entry))
         (push entry helixel--action-ring)
         (helixel-action--ring-cap)
-        (helixel--jump-list-push (copy-tree entry))
+        (run-hook-with-args 'helixel-action-push-functions entry)
         t))))
 
 ;; ── Jump list push ──
@@ -392,9 +397,12 @@ Always creates a fresh marker at point.
 Callers that need a specific marker should call
 `helixel--live-put :marker' afterward.
 
+No-op when `helixel--inhibit-action-track' is non-nil.
+
 RING SAFETY: Old actions are deep-copied before pushing.
 The new live action is a fresh plist, never aliased to any
 ring entry."
+  (unless helixel--inhibit-action-track
   (let* ((marker (point-marker))
          (action `(:category ,category :subcat ,subcat :marker ,marker)))
     ;; Any non-textobj action clears textobj selection state
@@ -408,7 +416,7 @@ ring entry."
     ;; Replace live action
     (setq helixel--action action
           helixel--action-pos nil)
-    action))
+    action)))
 
 ;; ── Marker jump ──
 
@@ -419,49 +427,71 @@ killed buffers) are silently ignored."
   (when (and (markerp marker) (marker-buffer marker))
     (push-mark marker t t)))
 
+;; ── Generic grouped-ring helpers ──
+;;
+;; Both `;' cycling (action ring) and C-o/C-i (jump list) share the
+;; same core algorithm: walk a list, skip invisible entries, group
+;; consecutive same-category entries, navigate via group-start.
+;; These generic helpers are parameterized by visibility predicate
+;; and same-group predicate.
+
+(defun helixel--grouped-ring-group-start (list pos same-group-pred)
+  "Return the oldest (largest) index in LIST of the group containing POS.
+Consecutive entries where FUNCALL SAMEGROUP-PRED returns non-nil form a group."
+  (let ((len (length list)))
+    (while (and (< (1+ pos) len)
+                (funcall same-group-pred (nth pos list) (nth (1+ pos) list)))
+      (cl-incf pos))
+    pos))
+
+(defun helixel--grouped-ring-group-newest (list pos same-group-pred)
+  "Return the newest (smallest) index in LIST of the group containing POS."
+  (let ((i pos))
+    (while (and (> i 0)
+                (funcall same-group-pred (nth i list) (nth (1- i) list)))
+      (cl-decf i))
+    i))
+
+(defun helixel--grouped-ring-visible-index (list pos visible-pred)
+  "Return index of first visible entry starting at POS in LIST, or nil."
+  (cl-loop for i from pos below (length list)
+           when (funcall visible-pred (nth i list))
+           return i))
+
+(defun helixel--grouped-ring-visible-count (list visible-pred)
+  "Count visible entries in LIST."
+  (cl-loop for a in list
+           when (funcall visible-pred a)
+           count 1))
+
+(defun helixel--grouped-ring-find (list pos direction visible-pred)
+  "Find index of next visible entry from POS in DIRECTION.
+DIRECTION: +1 = older (toward end), -1 = newer (toward 0).
+Returns the index or nil."
+  (let ((len (length list)))
+    (cl-loop for i from (+ pos direction) by direction
+             while (if (> direction 0) (< i len) (>= i 0))
+             when (funcall visible-pred (nth i list))
+             return i)))
+
 ;; ─── ; cycle helpers ───
 
 (defun helixel-action--cycle-visible-p (action)
   "Return non-nil if ACTION should be visible during `;' cycling."
   (memq (plist-get action :category) helixel-action-cycle-categories))
 
-(defun helixel-action--cycle-visible-index (pos ring)
-  "Return index of the first visible entry starting at POS in RING, or nil."
-  (cl-loop for i from pos below (length ring)
-           when (helixel-action--cycle-visible-p (nth i ring))
-           return i))
-
-(defun helixel-action--cycle-visible-count (ring)
-  "Count visible entries in RING for `;' cycling."
-  (cl-loop for a in ring
-           when (helixel-action--cycle-visible-p a)
-           count 1))
-
 (defun helixel-action--cycle-display (action pos ring)
-  "Format cycling message: [POS/MAX] with display string for ACTION.
-POS is a raw ring index in RING; displayed position is 1-based
-within visible entries."
-  (let* ((total (helixel-action--cycle-visible-count ring))
+  "Format cycling message: [POS/MAX] with display string for ACTION."
+  (let* ((total (helixel--grouped-ring-visible-count
+                 ring #'helixel-action--cycle-visible-p))
          (display-pos (1+ (cl-loop for i from 0 below pos
                                    count (helixel-action--cycle-visible-p
                                           (nth i ring))))))
     (format "[%d/%d] %s" display-pos total
             (helixel-action-display action))))
 
-(defun helixel-action--cycle-find (pos direction ring)
-  "Find index of next visible entry in RING from POS in DIRECTION.
-DIRECTION: +1 = older (toward end), -1 = newer (toward 0).
-Returns the index or nil."
-  (let ((len (length ring)))
-    (cl-loop for i from (+ pos direction) by direction
-             while (if (> direction 0) (< i len) (>= i 0))
-             when (helixel-action--cycle-visible-p (nth i ring))
-             return i)))
-
 (defun helixel-action--cycle-show (pos ring)
-  "Show the group-start action for the group containing RING[POS].
-Consecutive entries with the same (:category :subcat) form a group.
-Show the oldest (largest index) entry of the group."
+  "Show the group-start action for the group containing RING[POS]."
   (let* ((gpos (helixel-action--cycle-group-start pos ring))
          (action (nth gpos ring)))
     (setq helixel--action-pos gpos)
@@ -476,23 +506,10 @@ Same group = same :category and same :subcat."
        (eq (helixel--action-get a :subcat) (helixel--action-get b :subcat))))
 
 (defun helixel-action--cycle-group-start (pos ring)
-  "Return the oldest (largest) index of the consecutive group containing POS.
-Entries at POS, POS+1, ... with same group as RING[POS] form the group."
-  (let ((len (length ring)))
-    (while (and (< (1+ pos) len)
-                (helixel-action--same-group-p
-                 (nth pos ring) (nth (1+ pos) ring)))
-      (cl-incf pos))
-    pos))
+  (helixel--grouped-ring-group-start ring pos #'helixel-action--same-group-p))
 
 (defun helixel-action--cycle-group-newest (pos ring)
-  "Return the newest (smallest) index of the consecutive group containing POS.
-Entries at ..., pos-1, pos with same group as RING[POS] form the group."
-  (let ((i pos))
-    (while (and (> i 0)
-                (helixel-action--same-group-p (nth i ring) (nth (1- i) ring)))
-      (cl-decf i))
-    i))
+  (helixel--grouped-ring-group-newest ring pos #'helixel-action--same-group-p))
 
 (defun helixel-action--cycle-commit ()
   "Commit live action to ring if valid, discard otherwise.
@@ -523,10 +540,9 @@ Bound to `;' in normal mode."
          (let* ((newest (helixel-action--cycle-group-newest
                          helixel--action-pos helixel--action-ring))
                 (prev (when (> newest 0)
-                        (cl-loop for i from (1- newest) downto 0
-                                 when (helixel-action--cycle-visible-p
-                                       (nth i helixel--action-ring))
-                                 return i))))
+                        (helixel--grouped-ring-visible-index
+                         helixel--action-ring (1- newest)
+                         #'helixel-action--cycle-visible-p))))
            (if prev
                (helixel-action--cycle-show prev helixel--action-ring)
              (message "At newest"))))
@@ -541,21 +557,22 @@ Bound to `;' in normal mode."
     ;; ; → go back (older)
     (cond
      (helixel--action-pos
-      (let ((pos (helixel-action--cycle-find
-                  helixel--action-pos 1 helixel--action-ring)))
+      (let ((pos (helixel--grouped-ring-find
+                  helixel--action-ring helixel--action-pos 1
+                  #'helixel-action--cycle-visible-p)))
         (if pos
             (helixel-action--cycle-show pos helixel--action-ring)
           (message "No more"))))
      (helixel--action
       (helixel-action--cycle-commit)
-      (let ((pos (helixel-action--cycle-visible-index
-                  0 helixel--action-ring)))
+      (let ((pos (helixel--grouped-ring-visible-index
+                  helixel--action-ring 0 #'helixel-action--cycle-visible-p)))
         (if pos
             (helixel-action--cycle-show pos helixel--action-ring)
           (message "No saved actions"))))
      (helixel--action-ring
-      (let ((pos (helixel-action--cycle-visible-index
-                  0 helixel--action-ring)))
+      (let ((pos (helixel--grouped-ring-visible-index
+                  helixel--action-ring 0 #'helixel-action--cycle-visible-p)))
         (if pos
             (helixel-action--cycle-show pos helixel--action-ring)
           (message "No saved actions"))))
@@ -605,7 +622,7 @@ The advice is named `helixel-jump--before' on SYMBOL."
                 (helixel-register-jump 'goto 'jump))
               '((name . helixel-jump--before))))
 
-;; ── Jump list display ──
+;; ── Jump display helpers ──
 
 (defun helixel--jump-display (action)
   "Format jump entry ACTION for display during C-o/C-i cycling."
@@ -619,12 +636,10 @@ The advice is named `helixel-jump--before' on SYMBOL."
                 (buffer-name buf)
               "(dead)"))))
 
-;; ── Jump cycle helpers ──
+;; ── Jump cycle predicates ──
 
 (defun helixel--jump-visible-p (action)
-  "Return non-nil if ACTION is visible during C-o/C-i cycling.
-An entry is visible if its :category is in `helixel-jump-cycle-categories'
-and its marker/buffer are still alive."
+  "Return non-nil if ACTION is visible during C-o/C-i cycling."
   (and (memq (plist-get action :category) helixel-jump-cycle-categories)
        (let ((m (plist-get action :marker))
              (buf (plist-get action :buffer)))
@@ -639,50 +654,18 @@ Same group = same :category, :subcat, and :buffer."
        (eq (plist-get a :buffer) (plist-get b :buffer))))
 
 (defun helixel--jump-group-start (pos)
-  "Return the oldest (largest) index of the consecutive group containing POS.
-Entries at POS, POS+1, ... with same group form the group."
-  (let ((len (length helixel--jump-list)))
-    (while (and (< (1+ pos) len)
-                (helixel--jump-same-group-p
-                 (nth pos helixel--jump-list)
-                 (nth (1+ pos) helixel--jump-list)))
-      (cl-incf pos))
-    pos))
+  (helixel--grouped-ring-group-start helixel--jump-list pos
+    #'helixel--jump-same-group-p))
 
 (defun helixel--jump-group-newest (pos)
-  "Return the newest (smallest) index of the consecutive group containing POS."
-  (while (and (> pos 0)
-              (helixel--jump-same-group-p
-               (nth pos helixel--jump-list)
-               (nth (1- pos) helixel--jump-list)))
-    (cl-decf pos))
-  pos)
-
-(defun helixel--jump-visible-count ()
-  "Count visible entries in `helixel--jump-list'."
-  (cl-loop for a in helixel--jump-list
-           when (helixel--jump-visible-p a)
-           count 1))
-
-(defun helixel--jump-visible-index (pos)
-  "Return index of first visible entry starting at POS, or nil."
-  (cl-loop for i from pos below (length helixel--jump-list)
-           when (helixel--jump-visible-p (nth i helixel--jump-list))
-           return i))
-
-(defun helixel--jump-find (pos direction)
-  "Find index of next visible entry from POS in DIRECTION.
-DIRECTION: +1 = older, -1 = newer.  Returns the index or nil."
-  (let ((len (length helixel--jump-list)))
-    (cl-loop for i from (+ pos direction) by direction
-             while (if (> direction 0) (< i len) (>= i 0))
-             when (helixel--jump-visible-p (nth i helixel--jump-list))
-             return i)))
+  (helixel--grouped-ring-group-newest helixel--jump-list pos
+    #'helixel--jump-same-group-p))
 
 (defun helixel--jump-message (pos)
   "Format and message the current jump position."
   (let* ((action (nth pos helixel--jump-list))
-         (total (helixel--jump-visible-count))
+         (total (helixel--grouped-ring-visible-count
+                 helixel--jump-list #'helixel--jump-visible-p))
          (display-pos (1+ (cl-loop for i from 0 below pos
                                    count (helixel--jump-visible-p
                                           (nth i helixel--jump-list))))))
@@ -723,18 +706,19 @@ Moves point to the recorded position, switching buffers if needed.
 Pushes a return entry so C-i can navigate forward to the starting point.
 Bound to C-o in normal mode."
   (interactive)
-  (let* ((pre-pos helixel--jump-pos)
-         (saved-pos pre-pos))
+  (let* ((saved-pos helixel--jump-pos))
     (helixel-register-jump 'jump 'return)
     (setq helixel--jump-pos (if saved-pos (1+ saved-pos) nil))
     (let* ((start (if helixel--jump-pos helixel--jump-pos 0))
-           (pos (helixel--jump-find start 1))
+           (pos (helixel--grouped-ring-find
+                 helixel--jump-list start 1 #'helixel--jump-visible-p))
            (found nil))
       (while pos
         (if (helixel--jump-goto pos)
             (setq found t pos nil)
           (setq helixel--jump-pos pos
-                pos (helixel--jump-find pos 1))))
+                pos (helixel--grouped-ring-find
+                     helixel--jump-list pos 1 #'helixel--jump-visible-p))))
       (unless found
         (message (if helixel--jump-pos "At oldest" "No jump positions"))))))
 
@@ -746,12 +730,10 @@ Bound to C-i in normal mode."
   (if helixel--jump-pos
       (let ((newest (helixel--jump-group-newest helixel--jump-pos))
             (pos nil))
-        (while (and (not pos)
-                    (> newest 0))
-          (setq pos (cl-loop for i from (1- newest) downto 0
-                             when (helixel--jump-visible-p
-                                   (nth i helixel--jump-list))
-                             return i))
+        (while (and (not pos) (> newest 0))
+          (setq pos (helixel--grouped-ring-visible-index
+                     helixel--jump-list (1- newest)
+                     #'helixel--jump-visible-p))
           (when pos
             (let ((success (helixel--jump-goto pos)))
               (unless success

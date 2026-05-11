@@ -54,6 +54,7 @@
 (defvar helixel--repeat-sel-ctx)
 (declare-function helixel-up-paren "helixel-textobj")
 (declare-function helixel--record-edit "helixel-repeat")
+(declare-function helixel-action-start "helixel-action")
 
 ;; ============================================================================
 ;; Block alist — per-mode string-based surround pairs
@@ -237,6 +238,7 @@ Reads character, looks up new delimiter, deletes old, adds new."
     (helixel--surround-delete-delimiter d)
     (helixel--surround-add (helixel-delimiter-open new-d)
                           (helixel-delimiter-close new-d))
+    (helixel-action-start 'edit 'surround-replace)
     (helixel--record-edit 'surround-replace :new-char new-char)
     (setq helixel--repeat-sel-ctx
           (list :fn this-command :kind 'textobj
@@ -287,6 +289,7 @@ D is the tag delimiter plist used to locate the tags."
     (unless pair
       (user-error "Unknown surround delimiter: %c" char))
     (helixel--surround-add open close)
+    (helixel-action-start 'edit 'surround-add)
     (helixel--record-edit 'surround-add :char char)
     (setq helixel--repeat-sel-ctx
           (list :fn this-command :kind 'textobj
@@ -302,6 +305,7 @@ D is the tag delimiter plist used to locate the tags."
     (user-error "No active selection to surround"))
   (let ((tag (read-string "Tag: ")))
     (helixel--surround-add-tag tag)
+    (helixel-action-start 'edit 'surround-add)
     (helixel--record-edit 'surround-add-tag :tag tag)
     (setq helixel--repeat-sel-ctx
           (list :fn this-command :kind 'textobj
@@ -324,6 +328,7 @@ Uses `helixel--repeat-sel-ctx' to determine the delimiter type."
       (goto-char (/ (+ (region-beginning) (region-end)) 2)))
     (let ((pos (helixel--surround-delete-delimiter d)))
       (goto-char pos)
+      (helixel-action-start 'edit 'surround-delete)
       (helixel--record-edit 'surround-delete))))
 
 (defun helixel-surround-replace ()
@@ -346,6 +351,7 @@ Prompts per type: tag `read-string', all others `read-char'."
            (when (use-region-p)
              (goto-char (/ (+ (region-beginning) (region-end)) 2)))
            (helixel--surround-replace-tag new-tag d)
+           (helixel-action-start 'edit 'surround-replace)
            (helixel--record-edit 'surround-replace :tag new-tag
                                  :surround-type 'tag)
            (setq helixel--repeat-sel-ctx
