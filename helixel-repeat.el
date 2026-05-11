@@ -48,12 +48,10 @@
 ;; Set by textobj/line/rect/movement selection commands.
 ;; Consumed by helixel--record-edit when an edit command executes.
 ;;
-;; Schema:
-;;   (:fn FUNCTION :kind textobj|line|rect)     -- textobj / line / rect
-;;   (:kind movement :moves ((CMD . COUNT) ...)) -- visual-mode moves
-;;
-;; Replay is dispatched through a unified
-;; helixel--recreate-selection function.
+;; Schema is the *selection descriptor* understood by
+;; `helixel-sel-recreate' — see helixel-edit.el.  Any plist with a
+;; recognised :kind (or legacy :fn) works; replay dispatches via
+;; cl-defmethod.
 
 (defvar-local helixel--repeat-sel-ctx nil
   "Selection context for dot-repeat.
@@ -112,19 +110,9 @@ The `helixel-define-command' macro handles this automatically."
 
 (defun helixel--recreate-selection (sel-ctx)
   "Recreate a selection from SEL-CTX at the current point.
-Dispatches on :kind to use the appropriate replay strategy.
-Respects :count for multi-line/multi-step selections."
+Thin wrapper around `helixel-sel-recreate' — dispatches on (:kind ...)."
   (when sel-ctx
-    (let ((kind (plist-get sel-ctx :kind))
-          (count (or (plist-get sel-ctx :count) 1)))
-      (cond
-       ((plist-get sel-ctx :fn)
-        (funcall (plist-get sel-ctx :fn) count))
-       ((eq kind 'movement)
-        (let ((helixel--current-state 'visual))
-          (dolist (m (reverse (plist-get sel-ctx :moves)))
-            (dotimes (_ (cdr m))
-              (funcall (car m))))))))))
+    (helixel-sel-recreate (plist-get sel-ctx :kind) sel-ctx)))
 
 ;; ---------------------------------------------------------------------------
 ;; Execution dispatcher — single entry point for replay
