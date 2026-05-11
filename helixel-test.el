@@ -3056,6 +3056,27 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (helixel-repeat-edit)
     (should (string= (buffer-string) "aZbZc"))))
 
+(ert-deftest helixel-test-edit-ring-push-and-dedup ()
+  "`helixel--record-edit' pushes onto the ring with head dedup."
+  (helixel-test-with-buffer "hello world"
+    (setq helixel--edit-ring nil helixel--last-tx nil)
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word
+          this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (should (= 1 (length helixel--edit-ring)))
+    (should (eq (car helixel--edit-ring) helixel--last-tx))
+    ;; Repeating the very same op shouldn't grow the ring (head dedup).
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word
+          this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (should (= 1 (length helixel--edit-ring)))))
+
 (ert-deftest helixel-test-edit-display ()
   "`helixel-edit-display' formats op + sel + payload hints."
   (should (string= (helixel-edit-display
