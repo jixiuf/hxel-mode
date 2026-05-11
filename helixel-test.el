@@ -3026,6 +3026,36 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
       (helixel-repeat-edit)
       (should (equal helixel--last-tx before)))))
 
+(ert-deftest helixel-test-repeat-edit-change-end-to-end ()
+  "End-to-end: c<text><esc> records inserted text; `.' replays it."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word
+          this-command 'helixel-change-thing-at-point)
+    (helixel-change-thing-at-point)
+    (insert "X")
+    (helixel-insert-exit)
+    (should (string= (buffer-string) "X world foo"))
+    ;; Repeat inside "world"
+    (goto-char 4)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "X X foo"))))
+
+(ert-deftest helixel-test-repeat-edit-insert-end-to-end ()
+  "End-to-end: i<text><esc> records inserted text; `.' replays it."
+  (helixel-test-with-buffer "abc"
+    (goto-char 2)
+    (setq last-command nil this-command 'helixel-insert)
+    (helixel-insert)
+    (insert "Z")
+    (helixel-insert-exit)
+    (should (string= (buffer-string) "aZbc"))
+    (goto-char 4)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "aZbZc"))))
+
 (ert-deftest helixel-test-repeat-edit-movement-kill ()
   "Test repeat kill with movement selection (v w d style)."
   (helixel-test-with-buffer "hello world foo"
