@@ -45,8 +45,8 @@
 ;;                    ;; | paste-after | paste-before
 ;;                    ;; | indent-left | indent-right
 ;;                    ;; | insert-text
-;;  :sel    plist|nil ;; selection context (:fn F :kind K)
-;;                    ;; or (:kind movement :moves ...)
+;;  :sel    plist|nil ;; selection descriptor — see `helixel-sel-recreate'
+;;                    ;; (:kind K [:fn F] [:count N] [:delimiter D] [:moves ...])
 ;;                    ;; nil = no selection (cursor-at-point operations)
 ;;  :payload plist    ;; operator-specific data, always a plist (may be nil)
 ;;  :marker marker)   ;; position where the edit started (for ; jumping)
@@ -151,6 +151,38 @@ e.g. \"d.textobj\", \"c.line\", \"p\", \"R\", \"<\"."
 (defun helixel-edit-operator-p (op)
   "Return non-nil if OP is a known edit operator."
   (memq op helixel-edit-operator-names))
+
+;; ---------------------------------------------------------------------------
+;; Selection-descriptor dispatch
+;;
+;; A selection descriptor is a plist whose :kind drives how the selection is
+;; recreated at replay time.  Owners of a selection kind register a method on
+;; `helixel-sel-recreate' (textobj/line/rect/movement/surround/...).
+;;
+;; The default method falls back to the legacy `:fn FUNCTION' form so that
+;; un-migrated producers keep working — this lets the refactor proceed
+;; module-by-module without breaking tests.
+
+(cl-defgeneric helixel-sel-recreate (kind ctx)
+  "Recreate a selection at point given descriptor KIND and full CTX plist.
+Methods specialise on KIND via `(eql SYMBOL)'.  CTX carries any
+additional fields (:count, :delimiter, :moves, ...).")
+
+(cl-defmethod helixel-sel-recreate (_kind ctx)
+  "Default: legacy `:fn' descriptor.  Calls (FN COUNT) when present."
+  (when-let* ((fn (plist-get ctx :fn)))
+    (funcall fn (or (plist-get ctx :count) 1))))
+
+(defvar helixel--current-state)
+
+(cl-defmethod helixel-sel-recreate ((_kind (eql movement)) ctx)
+  "Replay a recorded sequence of movement commands while in visual state.
+CTX has shape (:kind movement :moves ((CMD . COUNT) ...)).  Moves are
+stored newest-first; replayed oldest-first."
+  (let ((helixel--current-state 'visual))
+    (dolist (m (reverse (plist-get ctx :moves)))
+      (dotimes (_ (cdr m))
+        (funcall (car m))))))
 
 (provide 'helixel-edit)
 ;;; helixel-edit.el ends here

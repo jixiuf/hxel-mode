@@ -420,7 +420,7 @@ automatically, so this macro only does push-mark + activate."
     (setq helixel--selection-type 'line)
     (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
       (setq helixel--repeat-sel-ctx
-            (list :fn #'helixel-select-line :kind 'line
+            (list :kind 'line
                   :count (if extending (+ prev-count n) n))))))
 
 (helixel-define-command helixel-select-line-up
@@ -442,7 +442,7 @@ automatically, so this macro only does push-mark + activate."
     (setq helixel--selection-type 'line)
     (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
       (setq helixel--repeat-sel-ctx
-            (list :fn #'helixel-select-line-up :kind 'line
+            (list :kind 'line :dir 'up
                   :count (if extending (+ prev-count n) n))))))
 
 (helixel-define-command helixel-select-rectangle
@@ -468,7 +468,7 @@ automatically, so this macro only does push-mark + activate."
     (setq helixel--selection-type 'rect)
     (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
       (setq helixel--repeat-sel-ctx
-            (list :fn #'helixel-select-rectangle :kind 'rect
+            (list :kind 'rect
                   :count (if extending (+ prev-count n) n))))))
 
 ;;; Line-wise helpers
@@ -1309,6 +1309,25 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
 (helixel-define-jump-command 'xref-find-references)
 (helixel-define-jump-command 'eglot-find-typeDefinition)
 (helixel-define-jump-command 'eglot-find-implementation)
+
+;; ---------------------------------------------------------------------------
+;; Selection-descriptor methods (see `helixel-sel-recreate' in helixel-edit.el)
+;;
+;; Producers below set (:kind line :count N) / (:kind rect :count N) without
+;; needing to embed a function reference.  These methods own replay for those
+;; kinds.  Legacy `:fn'-bearing descriptors still work via the default method.
+
+(cl-defmethod helixel-sel-recreate ((_kind (eql line)) ctx)
+  "Replay a linewise selection of (:count N) lines.
+(:dir up) selects upward via `helixel-select-line-up'; default is downward."
+  (let ((n (or (plist-get ctx :count) 1)))
+    (if (eq (plist-get ctx :dir) 'up)
+        (helixel-select-line-up n)
+      (helixel-select-line n))))
+
+(cl-defmethod helixel-sel-recreate ((_kind (eql rect)) ctx)
+  "Replay a rectangular selection of (:count N) rows."
+  (helixel-select-rectangle (or (plist-get ctx :count) 1)))
 
 (provide 'helixel-common)
 ;;; helixel-common.el ends here
