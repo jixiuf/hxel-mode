@@ -41,37 +41,27 @@
 ;; ---------------------------------------------------------------------------
 ;; Transaction Plist Schema
 ;;
-;; (:op     symbol    ;; kill | change | copy | replace | replace-char
-;;                    ;; | paste-after | paste-before
-;;                    ;; | indent-left | indent-right
-;;                    ;; | insert-text
+;; (:op     symbol    ;; operator name; see the op registry below for the
+;;                    ;; live set.  Owning modules register via
+;;                    ;; `helixel-edit-defop'.
 ;;  :sel    plist|nil ;; selection descriptor — see `helixel-sel-recreate'
-;;                    ;; (:kind K [:fn F] [:count N] [:delimiter D] [:moves ...])
+;;                    ;; (:kind K [:count N] [:delimiter D] [:command S]
+;;                    ;;        [:moves ((CMD . COUNT) ...)] ...)
 ;;                    ;; nil = no selection (cursor-at-point operations)
-;;  :payload plist    ;; operator-specific data, always a plist (may be nil)
-;;  :marker marker)   ;; position where the edit started (for ; jumping)
-;;
-;; Payload per :op:
-;;   kill:           nil
-;;   change:         (:inserted-text STRING)  -- added by insert-exit
-;;   copy:           nil
-;;   replace:        nil
-;;   replace-char:   (:char CHAR)
-;;   paste-after:    nil
-;;   paste-before:   nil
-;;   indent-left:    nil
-;;   indent-right:   nil
-;;   insert-text:    (:text STRING)  -- added by insert-exit
+;;  :payload plist    ;; operator-specific data (may be nil; mutate via
+;;                    ;; `helixel-edit-with-payload' — never `plist-put' in
+;;                    ;; place since the head may be nil).
+;;  :marker marker)   ;; position where the edit started (used by `;'
+;;                    ;; jumping in helixel-action.el).
 
 ;; ---------------------------------------------------------------------------
 ;; Builder
 
 (defun helixel-edit-make (op sel-ctx &rest payload-kv)
   "Create an edit transaction plist.
-OP is a symbol: kill, change, copy, replace, replace-char,
-paste-after, paste-before, indent-left, indent-right, insert-text.
-SEL-CTX is a selection context plist or nil.
-PAYLOAD-KV are keyword-value pairs for operator-specific data."
+OP is a registered operator symbol (see `helixel-edit-defop').
+SEL-CTX is a selection descriptor or nil.
+PAYLOAD-KV are keyword/value pairs forming the :payload plist."
   (list :op op
         :sel sel-ctx
         :payload payload-kv
@@ -140,10 +130,6 @@ Format: OP[.SEL][xCOUNT].  Op label and sel label are pluggable
 ;; ---------------------------------------------------------------------------
 ;; Payload helpers
 
-(defsubst helixel-edit--payload-get (tx key)
-  "Read KEY from the :payload of TX.  Convenience wrapper."
-  (plist-get (helixel-edit-payload tx) key))
-
 (defun helixel-edit-with-payload (tx key value)
   "Return a new transaction equal to TX with payload KEY set to VALUE.
 Does not mutate TX (the existing :payload may be shared with other
@@ -199,11 +185,9 @@ Falls back to symbol-name when unset."
 ;;
 ;; A selection descriptor is a plist whose :kind drives how the selection is
 ;; recreated at replay time.  Owners of a selection kind register a method on
-;; `helixel-sel-recreate' (textobj/line/rect/movement/surround/...).
-;;
-;; The default method falls back to the legacy `:fn FUNCTION' form so that
-;; un-migrated producers keep working — this lets the refactor proceed
-;; module-by-module without breaking tests.
+;; `helixel-sel-recreate' (see helixel-textobj.el, helixel-common.el and
+;; helixel-surround.el).  This module ships only the generic and the
+;; `(eql movement)' method (which has no module dependencies).
 
 (cl-defgeneric helixel-sel-recreate (kind ctx)
   "Recreate a selection at point given descriptor KIND and full CTX plist.
