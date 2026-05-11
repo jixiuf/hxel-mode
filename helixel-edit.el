@@ -132,6 +132,14 @@ Labels come from the op registry's :display field."
   "Read KEY from the :payload of TX.  Convenience wrapper."
   (plist-get (helixel-edit-payload tx) key))
 
+(defun helixel-edit-with-payload (tx key value)
+  "Return a new transaction equal to TX with payload KEY set to VALUE.
+Does not mutate TX (the existing :payload may be shared with other
+consumers, including a possibly-nil placeholder from `helixel-edit-make')."
+  (let* ((payload (copy-sequence (helixel-edit-payload tx)))
+         (new-payload (plist-put payload key value)))
+    (plist-put (copy-sequence tx) :payload new-payload)))
+
 ;; ---------------------------------------------------------------------------
 ;; Operator registry
 ;;

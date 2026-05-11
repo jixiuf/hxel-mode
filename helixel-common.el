@@ -218,12 +218,11 @@ Accumulates consecutive same-command moves by incrementing count."
   (when (and helixel--change-track-marker
              (member (helixel-edit-op helixel--last-tx)
                      '(change insert-text)))
-    (let ((text (buffer-substring helixel--change-track-marker (point)))
-          (payload (helixel-edit-payload helixel--last-tx)))
-      (plist-put payload
-                 (if (eq (helixel-edit-op helixel--last-tx) 'change)
-                     :inserted-text :text)
-                 text))
+    (let* ((text (buffer-substring helixel--change-track-marker (point)))
+           (key (if (eq (helixel-edit-op helixel--last-tx) 'change)
+                    :inserted-text :text)))
+      (setq helixel--last-tx
+            (helixel-edit-with-payload helixel--last-tx key text)))
     (set-marker helixel--change-track-marker nil)
     (setq helixel--change-track-marker nil))
   (when helixel--rect-replay-data
