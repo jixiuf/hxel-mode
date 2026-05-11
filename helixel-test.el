@@ -2944,7 +2944,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (goto-char 3)
     (setq helixel--last-tx
           `(:op change
-                      :sel (:fn helixel-mark-inner-word :kind textobj)
+                      :sel (:kind textobj :command helixel-mark-inner-word :count 1)
                       :payload (:inserted-text "CHANGED")))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "CHANGED world foo"))

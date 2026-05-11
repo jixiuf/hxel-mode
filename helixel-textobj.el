@@ -28,6 +28,7 @@
 (require 'cl-lib)
 (require 'thingatpt)
 (require 'helixel-delimiter)
+(require 'helixel-edit)
 
 (defvar helixel--surround-pairs nil
   "Alist mapping a delimiter char to (open . close) for surround.
@@ -1177,15 +1178,18 @@ preceeding (or following) whitespace is added to the range."
           (end (helixel-normalize-position (nth 1 range))))
       (min beg end))))
 
-(defun helixel--activate-textobj-range (range &optional delimiter)
-  "Activate RANGE as a textobj selection with optional DELIMITER.
-RANGE may be a cons (BEG . END) or a list (BEG END ...)."
+(defun helixel--activate-textobj-range (range &optional delimiter count)
+  "Activate RANGE as a textobj selection with optional DELIMITER and COUNT.
+RANGE may be a cons (BEG . END) or a list (BEG END ...).
+COUNT (default 1) is stored in the descriptor so dot-repeat replays
+the same multiplier."
   (when range
     (push-mark (car range) nil t)
     (goto-char (if (consp (cdr range)) (cadr range) (cdr range)))
     (setq helixel--selection-type 'textobj
           helixel--repeat-sel-ctx
-          (list :fn this-command :kind 'textobj
+          (list :kind 'textobj :command this-command
+                :count (or count 1)
                 :delimiter delimiter))))
 
 
@@ -1539,7 +1543,8 @@ pair.  INNER-P non-nil means inner, nil means a."
                                 (when (helixel--use-region-p)
                                   (region-end))
                                 nil count ,inclusive)
-          (helixel--make-pair-delimiter ,open ,close)))
+          (helixel--make-pair-delimiter ,open ,close)
+          count))
        ,@(unless inner-p
            `((push (cons ,open ,close) helixel--surround-pairs)
              (push (cons ,close ,open) helixel--surround-pairs))))))
@@ -1569,7 +1574,8 @@ INNER-P non-nil means inner, nil means a."
                                 (when (helixel--use-region-p)
                                   (region-end))
                                 nil count ',inclusive)
-          (helixel--make-pair-delimiter ,quote-char ,quote-char)))
+          (helixel--make-pair-delimiter ,quote-char ,quote-char)
+          count))
        ,@(unless inner-p
            `((push (cons ,quote-char ,quote-char) helixel--surround-pairs))))))
 
@@ -1608,7 +1614,7 @@ RESTRICTED-P non-nil means use restricted version (for word/WORD)."
            (let ((beg (when use-bounds (region-beginning)))
                  (end (when use-bounds (region-end))))
              (helixel--activate-textobj-range
-              (,inner-func ,thing beg end count)))))
+              (,inner-func ,thing beg end count) nil count))))
        (defun ,outer-name (&optional count)
          ,outer-doc
          (interactive "p")
@@ -1622,7 +1628,7 @@ RESTRICTED-P non-nil means use restricted version (for word/WORD)."
            (let ((beg (when use-bounds (region-beginning)))
                  (end (when use-bounds (region-end))))
              (helixel--activate-textobj-range
-              (,outer-func ,thing beg end count))))))))
+              (,outer-func ,thing beg end count) nil count)))))))
 
 
 ;; ============================================================================
@@ -1640,7 +1646,8 @@ COUNT is the number of tags to select."
     (when (helixel--use-region-p) (region-beginning))
     (when (helixel--use-region-p) (region-end))
     nil count nil)
-   (helixel--make-tag-delimiter)))
+   (helixel--make-tag-delimiter)
+   count))
 (defun helixel-mark-a-tag (&optional count)
   "Select a tag.
 COUNT is the number of tags to select."
@@ -1652,7 +1659,8 @@ COUNT is the number of tags to select."
     (when (helixel--use-region-p) (region-beginning))
     (when (helixel--use-region-p) (region-end))
     nil count t)
-   (helixel--make-tag-delimiter)))
+   (helixel--make-tag-delimiter)
+   count))
 
 ;; ============================================================================
 ;; Generic Block Text Objects (org blocks, markdown fences, etc.)
@@ -1830,7 +1838,8 @@ COUNT is the number of blocks to select."
     (when (helixel--use-region-p) (region-beginning))
     (when (helixel--use-region-p) (region-end))
     nil count nil)
-   (helixel--make-block-delimiter)))
+   (helixel--make-block-delimiter)
+   count))
 
 (defun helixel-mark-a-block (&optional count)
   "Select a block (org block, markdown fence, etc.).
@@ -1843,7 +1852,8 @@ COUNT is the number of blocks to select."
     (when (helixel--use-region-p) (region-beginning))
     (when (helixel--use-region-p) (region-end))
     nil count t)
-   (helixel--make-block-delimiter)))
+   (helixel--make-block-delimiter)
+   count))
 
 (defmacro helixel-define-regex-textobj (name begin-re end-re
                                              &optional name-group
@@ -1873,7 +1883,8 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
            (when (helixel--use-region-p) (region-beginning))
            (when (helixel--use-region-p) (region-end))
            nil count nil ,name-group)
-          ',delimiter))
+          ',delimiter
+          count))
        (defun ,outer-name (&optional count)
          ,outer-doc
          (interactive "p")
@@ -1885,7 +1896,8 @@ SUBCAT is the textobj subcat symbol (default: 'block)."
            (when (helixel--use-region-p) (region-beginning))
            (when (helixel--use-region-p) (region-end))
            nil count t ,name-group)
-          ',delimiter)))))
+          ',delimiter
+          count)))))
 
 (defun helixel-get-tree-sitter-textobj (group &optional query)
   "Return a command for a tree-sitter text object of GROUP.
@@ -1914,7 +1926,7 @@ Example:
         (let ((range (evil-textobj-tree-sitter--range
                       count interned-groups query)))
           (if range
-              (helixel--activate-textobj-range range)
+              (helixel--activate-textobj-range range nil count)
             (evil-textobj-tree-sitter--message-not-found groups)))))))
 
 (helixel-define-mark-object "word" 'helixel-word "word" 'word t)
@@ -1987,6 +1999,14 @@ Example:
   "\`" #'helixel-mark-a-back-quote
   "'"  #'helixel-mark-a-single-quote
   "\"" #'helixel-mark-a-double-quote)
+
+(cl-defmethod helixel-sel-recreate ((_kind (eql textobj)) ctx)
+  "Replay a textobj selection by re-invoking the recorded :command.
+CTX has shape (:kind textobj :command SYMBOL :count N [:delimiter D]).
+The command symbol is one of the helixel-mark-{inner,a}-* defuns and
+accepts a single optional COUNT argument."
+  (when-let* ((cmd (plist-get ctx :command)))
+    (funcall cmd (or (plist-get ctx :count) 1))))
 
 (provide 'helixel-textobj)
 ;;; helixel-textobj.el ends here
