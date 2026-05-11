@@ -115,18 +115,11 @@ Returns t when both are nil (non-edit actions are equal for dedup)."
 
 (defun helixel-edit-display (tx)
   "Return a short display string for transaction TX.
-Format: operator symbol, optionally suffixed with selection kind.
-e.g. \"d.textobj\", \"c.line\", \"p\", \"R\", \"<\"."
+Format: operator label, optionally suffixed with selection kind.
+Labels come from the op registry's :display field."
   (let* ((op (helixel-edit-op tx))
          (sel (helixel-edit-sel tx))
-         (op-str (cl-case op
-                   (kill "d") (change "c") (copy "y")
-                   (replace "r") (paste-after "p") (paste-before "P")
-                   (indent-left "<") (indent-right ">")
-                   (replace-char "R") (insert-text "i")
-                   (surround-add "ms") (surround-add-tag "mt")
-                   (surround-delete "md") (surround-replace "mr")
-                   (t (symbol-name op))))
+         (op-str (helixel-edit-op-display op))
          (sel-kind (plist-get sel :kind)))
     (if sel-kind
         (format "%s.%s" op-str sel-kind)
@@ -140,17 +133,41 @@ e.g. \"d.textobj\", \"c.line\", \"p\", \"R\", \"<\"."
   (plist-get (helixel-edit-payload tx) key))
 
 ;; ---------------------------------------------------------------------------
-;; Operator classification (for repeat / history filtering)
+;; Operator registry
+;;
+;; Each :op symbol registers a runner (FN TX) that performs the edit at
+;; replay time, plus an optional :display label for history rendering.
+;; Modules register their own ops at load-time (see helixel-common.el and
+;; helixel-surround.el) — helixel-repeat.el dispatches purely through this
+;; registry, so adding a new operator never requires editing the kernel.
 
-(defvar helixel-edit-operator-names
-  '(kill change copy replace replace-char
-    paste-after paste-before indent-left indent-right insert-text
-    surround-add surround-add-tag surround-delete surround-replace)
-  "All known edit operators.")
+(defvar helixel-edit--op-registry (make-hash-table :test 'eq)
+  "Hash OP-SYMBOL → plist (:runner FN :display STRING).")
+
+(defun helixel-edit-register-op (op &rest props)
+  "Register edit OP with PROPS keyword list.
+Supported keys: :runner FUNCTION, :display STRING.
+Replaces any existing registration."
+  (puthash op props helixel-edit--op-registry))
+
+(defmacro helixel-edit-defop (op &rest props)
+  "Convenience macro wrapping `helixel-edit-register-op'.
+OP is an unquoted symbol; PROPS is a keyword plist."
+  (declare (indent 1))
+  `(helixel-edit-register-op ',op ,@props))
+
+(defun helixel-edit-op-runner (op)
+  "Return the runner function registered for OP, or nil."
+  (plist-get (gethash op helixel-edit--op-registry) :runner))
+
+(defun helixel-edit-op-display (op)
+  "Return display label for OP.  Falls back to symbol-name when unset."
+  (or (plist-get (gethash op helixel-edit--op-registry) :display)
+      (symbol-name op)))
 
 (defun helixel-edit-operator-p (op)
-  "Return non-nil if OP is a known edit operator."
-  (memq op helixel-edit-operator-names))
+  "Return non-nil if OP is a registered edit operator."
+  (and (gethash op helixel-edit--op-registry) t))
 
 ;; ---------------------------------------------------------------------------
 ;; Selection-descriptor dispatch
