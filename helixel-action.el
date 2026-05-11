@@ -390,6 +390,11 @@ and \"cat.subcat\" for other actions."
 
 ;; ── Start / continue an action ──
 
+(defvar helixel--inhibit-action-track nil
+  "When non-nil, `helixel-action-start' and visual tracking are no-ops.
+Bound by `helixel-repeat-edit' so dot-repeat does not re-record actions
+and pollute the action ring.")
+
 (defun helixel-action-start (category subcat)
   "Start a new action of CATEGORY and SUBCAT.
 Always pushes the previous valid `helixel--action' to ring.

@@ -113,10 +113,6 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
 ;; recording, highlight clearing, visual-mode tracking) is expanded
 ;; inline at compile time — zero hooks, zero advice.
 
-(defvar helixel--inhibit-action-track nil
-  "When non-nil, `helixel-action-start' and visual tracking are no-ops.
-Bound during `.` repeat to prevent double-recording actions.")
-
 (defmacro helixel-define-command (name metadata &rest body)
   "Define a helixel command NAME with METADATA auto-tracking.
 

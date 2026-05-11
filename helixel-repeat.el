@@ -20,19 +20,23 @@
 
 ;;; Commentary:
 ;;
-;; Dot-repeat (`.`) infrastructure for helixel-mode.
+;; Dot-repeat (`.') infrastructure for helixel-mode.
 ;;
-;; Records the last editing operation as a *transaction* — operator
-;; plus selection context — and replays it on demand.
+;; Records every editing operation as a *transaction* (see helixel-edit.el)
+;; into a per-buffer ring; `.' replays the head transaction, optionally with
+;; a numeric prefix.  `helixel-repeat-edit-pick' chooses an older entry from
+;; the ring via completing-read.
 ;;
 ;; Architecture:
-;;   Selection commands → set helixel--repeat-sel-ctx
-;;   Editing commands  → helixel--record-edit → helixel--last-edit
-;;   `.` key           → helixel-repeat-edit → replay
+;;   Selection commands  → set helixel--repeat-sel-ctx (selection descriptor)
+;;   Editing commands    → helixel--record-edit → helixel--last-tx + ring
+;;   `.'                 → helixel-repeat-edit → sel-recreate + op-runner
 ;;
-;; Dependencies: helixel-action (for action ring integration).
-;; Editing commands used during replay live in helixel-common,
-;; loaded at runtime via declare-function.
+;; Both selection recreation and op execution dispatch through registries
+;; in helixel-edit.el (cl-defgeneric helixel-sel-recreate, op runner table).
+;; This module knows nothing about specific kinds or operators.
+;;
+;; Dependencies: helixel-action (action ring) and helixel-edit (kernel).
 
 ;;; Code:
 
@@ -46,36 +50,24 @@
 ;; ---------------------------------------------------------------------------
 ;; Selection Context (helixel--repeat-sel-ctx)
 ;;
-;; Set by textobj/line/rect/movement selection commands.
-;; Consumed by helixel--record-edit when an edit command executes.
-;;
-;; Schema is the *selection descriptor* understood by
-;; `helixel-sel-recreate' — see helixel-edit.el.  Any plist with a
-;; recognised :kind (or legacy :fn) works; replay dispatches via
-;; cl-defmethod.
+;; Set by textobj/line/rect/movement selection commands; consumed by
+;; helixel--record-edit when the next edit fires.  Its shape is the
+;; *selection descriptor* understood by `helixel-sel-recreate' — see
+;; helixel-edit.el for the full schema.
 
 (defvar-local helixel--repeat-sel-ctx nil
-  "Selection context for dot-repeat.
-Set by textobj / linewise / rect selection commands, and accumulated
-by movement commands during visual mode.  Read and consumed by
-`helixel--record-edit'.
-
-Keys:
-  :fn    function       ;; For textobj/line/rect: call to create selection
-  :kind  symbol         ;; textobj | line | rect | movement
-  :moves ((CMD . COUNT) ...)  ;; For movement: accumulated command sequence")
+  "Selection descriptor for dot-repeat.
+Written by selection commands (textobj / line / rect / movement),
+consumed by `helixel--record-edit'.  See `helixel-sel-recreate' for
+the set of recognised :kind values.")
 
 ;; ---------------------------------------------------------------------------
 ;; Last Edit Transaction (stored as helixel--last-tx)
 
 (defvar-local helixel--last-tx nil
-  "The most recent edit transaction (:op :sel :payload :marker).
-Built by `helixel-edit-make', stored by `helixel--record-edit-tx'.
-Replace `helixel--last-edit' — unified schema shared by repeat,
-action ring, and edit commands.
-
-Mirrors `(car helixel--edit-ring)'.  See `helixel-edit.el' for the
-full transaction schema.")
+  "The most recent edit transaction (see `helixel-edit-make').
+Mirrors `(car helixel--edit-ring)' while both are non-nil.
+May be re-pointed by `helixel-repeat-edit-pick' to replay an older entry.")
 
 (defcustom helixel-edit-ring-max 64
   "Maximum number of past edit transactions retained in the ring.
