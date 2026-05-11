@@ -72,7 +72,7 @@ May be re-pointed by `helixel-repeat-edit-pick' to replay an older entry.")
 (defcustom helixel-edit-ring-max 64
   "Maximum number of past edit transactions retained in the ring.
 Older entries are discarded.  Set to 0 or nil to disable the ring
-(`helixel--last-tx' still works)."
+\(`helixel--last-tx' still works)."
   :type 'integer
   :group 'helixel)
 

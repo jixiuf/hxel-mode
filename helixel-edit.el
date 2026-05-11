@@ -44,12 +44,12 @@
 ;; (:op     symbol    ;; operator name; see the op registry below for the
 ;;                    ;; live set.  Owning modules register via
 ;;                    ;; `helixel-edit-defop'.
-;;  :sel    plist|nil ;; selection descriptor — see `helixel-sel-recreate'
-;;                    ;; (:kind K [:count N] [:delimiter D] [:command S]
-;;                    ;;        [:moves ((CMD . COUNT) ...)] ...)
+;;  :sel    plist|nil ;; selection descriptor - see `helixel-sel-recreate'
+;;                    ;; \(:kind K [:count N] [:delimiter D] [:command S]
+;;                    ;;        [:moves \(\(CMD . COUNT\) ...\)] ...\)
 ;;                    ;; nil = no selection (cursor-at-point operations)
 ;;  :payload plist    ;; operator-specific data (may be nil; mutate via
-;;                    ;; `helixel-edit-with-payload' — never `plist-put' in
+;;                    ;; `helixel-edit-with-payload' - never `plist-put' in
 ;;                    ;; place since the head may be nil).
 ;;  :marker marker)   ;; position where the edit started (used by `;'
 ;;                    ;; jumping in helixel-action.el).
@@ -104,19 +104,19 @@ Returns t when both are nil (non-edit actions are equal for dedup)."
 ;; Display — for action ring history and completion
 
 (cl-defgeneric helixel-sel-display (kind ctx)
-  "Return a short human-readable string describing selection CTX of KIND.
+  "Return a short human-readable string describing KIND with descriptor CTX.
 Methods specialise on KIND via `(eql SYMBOL)'.  Used by
 `helixel-edit-display' for action-history rendering.  Default returns
-the symbol-name of KIND.")
+the `symbol-name' of KIND.")
 
 (cl-defmethod helixel-sel-display (kind _ctx)
-  "Default: just the kind symbol's name."
+  "Default: just KIND's `symbol-name'."
   (symbol-name kind))
 
 (defun helixel-edit-display (tx)
   "Return a short display string for transaction TX.
-Format: OP[.SEL][xCOUNT].  Op label and sel label are pluggable
-(see `helixel-edit-op-display' and `helixel-sel-display')."
+Format: OP[.SEL][xCOUNT].  Op label and sel label are pluggable;
+see `helixel-edit-op-display' and `helixel-sel-display'."
   (let* ((op (helixel-edit-op tx))
          (sel (helixel-edit-sel tx))
          (op-str (helixel-edit-op-display op tx))
@@ -169,7 +169,7 @@ OP is an unquoted symbol; PROPS is a keyword plist."
 (defun helixel-edit-op-display (op &optional tx)
   "Return display label for OP.
 The registry's :display field may be a string or a function (TX -> STRING).
-Falls back to symbol-name when unset."
+Falls back to OP's `symbol-name' when unset."
   (let ((d (plist-get (gethash op helixel-edit--op-registry) :display)))
     (cond
      ((stringp d) d)
@@ -195,7 +195,6 @@ Methods specialise on KIND via `(eql SYMBOL)'.  CTX carries any
 additional fields (:count, :delimiter, :moves, :command, ...).
 The default method is a no-op so unknown / metadata-only kinds
 silently leave point alone.")
-
 (cl-defmethod helixel-sel-recreate (_kind _ctx)
   "Default: do nothing.  Overridden by methods on `(eql SYMBOL)'."
   nil)

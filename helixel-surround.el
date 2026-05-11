@@ -371,6 +371,7 @@ operates on the stored delimiter directly inside `helixel--execute-edit',
 so no region needs to be recreated here.")
 
 (cl-defmethod helixel-sel-display ((_kind (eql surround)) ctx)
+  "Render surround CTX as \"@TYPE\" using the stored delimiter type."
   (if-let* ((d (plist-get ctx :delimiter)))
       (format "@%s" (helixel-delimiter-type d))
     "surround"))
