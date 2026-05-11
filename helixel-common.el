@@ -1319,5 +1319,49 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
   "Replay a rectangular selection of (:count N) rows."
   (helixel-select-rectangle (or (plist-get ctx :count) 1)))
 
+;; ---------------------------------------------------------------------------
+;; Edit-op runners (registry consumers — see `helixel-edit-defop')
+;;
+;; Each runner receives the full transaction TX and performs the replay.
+;; They are looked up by `helixel--execute-edit' purely through the registry,
+;; so this file owns the implementation but `helixel-repeat.el' has zero
+;; knowledge of specific operators.
+
+(defun helixel--repeat-change-core (tx)
+  "Repeat change: kill selection, insert stored :inserted-text from TX payload."
+  (let ((text (plist-get (helixel-edit-payload tx) :inserted-text)))
+    (cond
+     ((and (use-region-p) (eq (helixel--selection-type) 'rect))
+      (helixel--rect-change)
+      (when text (insert text))
+      (helixel-insert-exit))
+     (t
+      (helixel--delete-selection)
+      (when text (insert text))))))
+
+(helixel-edit-defop kill          :display "d"
+  :runner (lambda (_tx) (helixel-kill-thing-at-point)))
+(helixel-edit-defop change        :display "c"
+  :runner #'helixel--repeat-change-core)
+(helixel-edit-defop copy          :display "y"
+  :runner (lambda (_tx) (helixel-kill-ring-save)))
+(helixel-edit-defop replace       :display "r"
+  :runner (lambda (_tx) (helixel-replace)))
+(helixel-edit-defop replace-char  :display "R"
+  :runner (lambda (tx)
+            (helixel-replace-char
+             (plist-get (helixel-edit-payload tx) :char))))
+(helixel-edit-defop paste-after   :display "p"
+  :runner (lambda (_tx) (helixel-yank)))
+(helixel-edit-defop paste-before  :display "P"
+  :runner (lambda (_tx) (helixel-yank-before)))
+(helixel-edit-defop indent-left   :display "<"
+  :runner (lambda (_tx) (helixel-indent-left)))
+(helixel-edit-defop indent-right  :display ">"
+  :runner (lambda (_tx) (helixel-indent-right)))
+(helixel-edit-defop insert-text   :display "i"
+  :runner (lambda (tx)
+            (insert (or (plist-get (helixel-edit-payload tx) :text) ""))))
+
 (provide 'helixel-common)
 ;;; helixel-common.el ends here

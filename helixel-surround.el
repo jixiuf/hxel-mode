@@ -370,5 +370,42 @@ Replay of `surround-add' / `surround-delete' / `surround-replace'
 operates on the stored delimiter directly inside `helixel--execute-edit',
 so no region needs to be recreated here.")
 
+;; ---------------------------------------------------------------------------
+;; Edit-op runners (registry consumers — see `helixel-edit-defop')
+
+(helixel-edit-defop surround-add :display "ms"
+  :runner (lambda (tx)
+            (when-let* ((char (plist-get (helixel-edit-payload tx) :char))
+                        (pair (helixel--surround-lookup char)))
+              (helixel--surround-add (car pair) (cdr pair)))))
+
+(helixel-edit-defop surround-add-tag :display "mt"
+  :runner (lambda (tx)
+            (helixel--surround-add-tag
+             (plist-get (helixel-edit-payload tx) :tag))))
+
+(helixel-edit-defop surround-delete :display "md"
+  :runner (lambda (tx)
+            (when-let* ((d (plist-get (helixel-edit-sel tx) :delimiter)))
+              (goto-char (helixel--surround-delete-delimiter d)))))
+
+(helixel-edit-defop surround-replace :display "mr"
+  :runner (lambda (tx)
+            (let* ((sel-ctx (helixel-edit-sel tx))
+                   (payload (helixel-edit-payload tx))
+                   (d (plist-get sel-ctx :delimiter))
+                   (type (and d (helixel-delimiter-type d)))
+                   (new-char (plist-get payload :new-char))
+                   (tag (plist-get payload :tag)))
+              (when d
+                (pcase type
+                  ('tag
+                   (when tag (helixel--surround-replace-tag tag d)))
+                  (_
+                   (when new-char
+                     (when-let* ((pair (helixel--surround-lookup new-char)))
+                       (helixel--surround-delete-delimiter d)
+                       (helixel--surround-add (car pair) (cdr pair))))))))))
+
 (provide 'helixel-surround)
 ;;; helixel-surround.el ends here
