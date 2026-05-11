@@ -1,8 +1,9 @@
 # helixel-mode Refactoring Session Log
 
-> **Status**: Complete — Phase A done. All 202 tests passing.
+> **Status**: Complete — Phases A–H done. All 316 tests passing.
 > **Goal**: Replace independent state variables with a single `helixel--action` plist +
-> `helixel--action-ring`, enabling future `.` repeat and cleaner direction/state management.
+> `helixel--action-ring`, enabling `.` repeat, clean direction/state management,
+> and a `helixel-define-command` macro to eliminate command boilerplate.
 
 ---
 
@@ -795,4 +796,124 @@ One-way chain, no circular dependencies. All modules load-time safe.
 ### 16.6. Tests (254 total)
 
 All 254 tests pass after each phase. No new test failures introduced.
+
+---
+
+## 17. Phase H — Command Macro + Generic Helpers + Hook Decoupling
+
+> **Date**: 2026-05-12
+> **Goal**: Eliminate repetitive tracking boilerplate from every command definition,
+> extract shared grouped-list logic, and decouple action ring from jump list.
+
+### 17.1. `helixel-define-command` Macro
+
+Before, every command had 5-7 lines of identical tracking boilerplate:
+
+```elisp
+;; Before — boilerplate in every command:
+(defun helixel-forward-word-start ()
+  (interactive)
+  (helixel-action-start 'movement 'word)
+  (helixel--live-cat-set-dir 'forward)
+  (helixel--clear-highlights)
+  (helixel--forward-beginning 'helixel-word)
+  (when (eq helixel--current-state 'visual)
+    (helixel--track-visual-move this-command)))
+```
+
+After — metadata declares intent, macro expands the boilerplate:
+
+```elisp
+(helixel-define-command helixel-forward-word-start
+  (:category movement :subcat word :dir forward)
+  (helixel--forward-beginning 'helixel-word))
+```
+
+The macro handles:
+- `(interactive)` insertion (or preserves explicit interactive form)
+- `helixel-action-start` for session tracking (`;` / `C-o`/`C-i`)
+- `helixel--live-cat-set-dir` for n/N repeat direction
+- `helixel--record-edit` for `.` repeat (when `:edit-op` set)
+- `helixel--clear-highlights` (default on for `:category movement`, off otherwise)
+- `helixel--track-visual-move` for visual-mode `.` replay
+
+All expanded inline at compile time — zero hooks, zero advice.
+
+### 17.2. Command Conversions
+
+Converted all `defun` commands across 4 files to use the macro:
+
+| File | Commands converted |
+|------|--------------------|
+| `helixel-common.el` | ~25 commands (movement, edit, state, insert) |
+| `helixel-search.el` | 4 commands (search forward/backward, at-point next/prev) |
+| `helixel-surround.el` | 4 commands (add, add-tag, delete, replace) |
+
+**Bonus**: surround commands were missing `helixel-action-start` calls entirely —
+fixed as part of the conversion.
+
+### 17.3. `helixel-define-movement` Now Delegates
+
+Wrapper mode in `helixel-define-movement` now delegates to `helixel-define-command`
+instead of generating a `defun` with inline boilerplate.  Advice mode unchanged.
+
+### 17.4. Generic Grouped-Ring Helpers (`helixel-action.el`)
+
+`;` cycling and `C-o`/`C-i` jump navigation shared identical group-skipping
+logic (find next visible, find group start/newest, count visible).  Extracted
+into 5 parameterized helpers:
+
+```elisp
+(helixel--grouped-ring-group-start   list pos same-group-pred)
+(helixel--grouped-ring-group-newest  list pos same-group-pred)
+(helixel--grouped-ring-visible-index list pos visible-pred)
+(helixel--grouped-ring-visible-count list visible-pred)
+(helixel--grouped-ring-find         list pos dir visible-pred)
+```
+
+Callers pass their own same-group and visibility predicates:
+- `;` cycling: `same-group-p` = category+subcat, `visible-p` = `cycle-categories` membership
+- C-o/C-i: `same-group-p` = category+subcat+buffer, `visible-p` = `jump-cycle-categories` + live marker
+
+Eliminated ~40 lines of duplicate code in jump cycle helpers.
+
+### 17.5. Hook-Based Jump List Push
+
+Before, `helixel-action--ring-push` directly called `helixel--jump-list-push`:
+
+```elisp
+;; Before — tight coupling:
+(helixel--jump-list-push (copy-tree entry))
+```
+
+After, ring-push fires an abnormal hook:
+
+```elisp
+;; After — loose coupling:
+(run-hook-with-args 'helixel-action-push-functions entry)
+
+;; helixel-common.el subscribes:
+(add-hook 'helixel-action-push-functions #'helixel--jump-list-push)
+```
+
+`helixel-action.el` now has zero dependency on the jump list subsystem.
+
+### 17.6. `helixel--inhibit-action-track`
+
+New flag bound to `t` during `.` repeat to prevent double-recording.
+`helixel-action-start` and `helixel--track-visual-move` are no-ops when set.
+Separate from `helixel--inhibit-repeat-record` (which only blocks `record-edit`).
+
+### 17.7. Removed `pre-command-hook` Selection Clearing
+
+`helixel--pre-command-clear-selection` and its `pre-command-hook` registration
+were removed.  In normal state with an active region, non-helixel commands no
+longer auto-deactivate the mark.
+
+### 17.8. Tests (316 total)
+
+All 316 tests pass.  +1 regression test for `helixel-goto-line` Lisp arg bug.
+
+**Bug fixed**: `helixel-goto-line` used `current-prefix-arg` instead of `arg`
+in the non-nil branch, causing incorrect line numbers when called from Lisp.
 

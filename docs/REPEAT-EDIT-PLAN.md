@@ -133,9 +133,6 @@ helixel--live-edit-set(tx)         (action ring — ; jumping consumer)
 `helixel--recreate-selection` passes count to `:fn` during replay.
 4 new tests added.
 
-### Priority 2 — `C-u .` edit history browsing
-**Approach**: Reuse action ring + `helixel-edit-display` for completing-read.
-
 ### Lower Priority
 - **Undo repeat**: `.` after `u`/`U` — debatable value
 - **Cross-buffer repeat**: last-tx is buffer-local

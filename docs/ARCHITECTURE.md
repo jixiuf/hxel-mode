@@ -13,7 +13,7 @@
 | `helixel-textobj.el` | Text objects and selection. Independent of helixel-common via hooks. |
 | `helixel-delimiter.el` | Unified delimiter protocol: plist accessors, finder (`helixel-delimiter-find`), bounds (`helixel-delimiter-bounds`), builders for pair/tag/block/regex delimiters. |
 | `helixel-surround.el` | Surround operations: add, delete, replace. Uses delimiter protocol from helixel-delimiter. |
-| `helixel-test.el` | ERT test suite (305 tests) |
+| `helixel-test.el` | ERT test suite (316 tests) |
 
 ### Dependency Graph
 
@@ -136,7 +136,59 @@ Key invariants:
 - Repeat direction lives in `helixel--repeat-dir` (search.el), separate from action `:dir`
 - Content dedup in `ring-push` compares marker positions to distinguish same-type operations at different locations
 
+### `helixel-define-command` Macro
+
+All helixel editing commands are defined via `helixel-define-command`, which
+expands action-tracking boilerplate inline at compile time (zero hooks, zero advice):
+
+```elisp
+(helixel-define-command NAME METADATA &rest BODY)
+
+;; METADATA plist keys:
+;;   :category      CAT  — action category (movement, edit, search, state, etc.)
+;;   :subcat        SUB  — action subcategory (word, kill, insert, etc.)
+;;   :dir           DIR  — direction for n/N repeat context (forward, backward)
+;;   :edit-op       OP   — calls (helixel--record-edit OP) for . repeat
+;;   :clear-highlights    — default t for :category movement, nil otherwise
+;;   :params        PARAM-LIST — optional function parameter list
+;;
+;; The macro expands to a defun with the following injected before BODY:
+;;   (helixel-action-start CAT SUB)         ; for ; and C-o/C-i
+;;   (helixel--live-cat-set-dir DIR)        ; for n/N repeat
+;;   (helixel--record-edit OP)              ; for . repeat
+;;   (helixel--clear-highlights)            ; when enabled
+;; After BODY:
+;;   (helixel--track-visual-move NAME)      ; in visual mode only
+
+;; Example — movement command:
+(helixel-define-command helixel-forward-word-start
+  (:category movement :subcat word :dir forward)
+  (helixel--forward-beginning 'helixel-word))
+
+;; Example — edit command:
+(helixel-define-command helixel-kill-thing-at-point
+  (:category edit :subcat kill :edit-op kill)
+  (helixel--delete-selection)
+  (helixel--clear-data))
+
+;; Example — with explicit params and interactive form:
+(helixel-define-command helixel-goto-line
+  (:category movement :subcat goto :params (&optional arg))
+  (interactive "P")
+  (goto-line (if arg (prefix-numeric-value arg) (goto-line-read-args))))
+
+;; Not recorded by .: pass :clear-highlights nil to suppress highlight clearing
+(helixel-define-command helixel-select-line
+  (:category movement :subcat lineselect :dir forward
+   :params (&optional count) :clear-highlights nil)
+  (interactive "p")
+  ...)
+```
+
 ### `helixel-define-movement` API
+
+Wraps a builtin Emacs command with action tracking.  Internally delegates to
+`helixel-define-command`.
 
 ```elisp
 ;; Wrapper mode — creates a new command that wraps a builtin
@@ -144,11 +196,6 @@ Key invariants:
 
 ;; Advice mode — injects :before advice directly into the builtin
 (helixel-define-movement nil BUILTIN TYPE &optional DIR :advice)
-
-;; NAME:    new command symbol (nil for advice mode)
-;; BUILTIN: underlying Emacs command (e.g. forward-paragraph)
-;; TYPE:    subcat symbol (e.g. goto)
-;; DIR:     optional direction
 
 ;; Example (wrapper):
 (helixel-define-movement helixel-forward-paragraph forward-paragraph goto)
@@ -538,19 +585,47 @@ When `C-o` or `C-i` switches to a different buffer, a **return entry**
 (`jump/return`) is automatically pushed so `C-i` can take you back.  This
 is handled internally by `helixel--jump-goto`.
 
-### Group-Skipping
+### Group-Skipping (Generic Helpers)
 
-Same algorithm as `;` — consecutive entries with the same `(:category :subcat :buffer)`
-are collapsed into one jump target (the oldest of the group).  Buffer identity
-is included so entries in different buffers are never merged.
+Both `;` cycling and `C-o`/`C-i` jump navigation share the same group-skipping
+algorithm via generic parameterized helpers in `helixel-action.el`:
 
-### Selection Prevention
+```elisp
+;; Core group navigation (parameterized by same-group predicate)
+(helixel--grouped-ring-group-start   list pos same-group-pred)  → oldest in group
+(helixel--grouped-ring-group-newest  list pos same-group-pred)  → newest in group
 
-When there is an active region in normal state, any non-helixel command
-(via `M-x`, `gd`, etc.) would extend the selection because the mark stays
-in place while point moves.  A `pre-command-hook` (`helixel--pre-command-clear-selection`)
-deactivates the mark before non-helixel commands run, preventing unintended
-selection extension.
+;; Visibility filtering (parameterized by visible predicate)
+(helixel--grouped-ring-visible-index list pos visible-pred)  → first visible ≥ pos
+(helixel--grouped-ring-visible-count list visible-pred)      → count of visible
+(helixel--grouped-ring-find         list pos dir visible-pred) → next visible in dir
+```
+
+Usage:
+- `;` cycling: `same-group-pred` = `helixel-action--same-group-p` (category+subcat),
+  `visible-pred` = `helixel-action--cycle-visible-p` (checks `cycle-categories`)
+- C-o/C-i: `same-group-pred` = `helixel--jump-same-group-p` (category+subcat+buffer),
+  `visible-pred` = `helixel--jump-visible-p` (checks `jump-cycle-categories` + live marker)
+
+Consecutive entries with matching predicates are collapsed into one jump target
+(the oldest of the group).  Buffer identity is included for jumps so entries
+in different buffers are never merged.
+
+### Jump List Push via Hook
+
+Every action pushed to the ring triggers `helixel-action-push-functions` —
+an abnormal hook run with the action plist as argument.  The jump list
+subsystem subscribes via `add-hook`, so `helixel-action.el` has zero
+dependency on the jump list.
+
+```elisp
+(defvar helixel-action-push-functions nil
+  "Abnormal hook run after an action is pushed to `helixel--action-ring'.
+Each function is called with one argument, the action plist.")
+
+;; helixel-common.el wires it:
+(add-hook 'helixel-action-push-functions #'helixel--jump-list-push)
+```
 
 ### Public API
 
@@ -576,8 +651,9 @@ Set by helixel-common.el to `helixel--clear-data'.")
 helixel--action-ring (buffer-local)          helixel--jump-list (global)
          │                                           │
          │  helixel-action--ring-push               │
-         │  ──────────────────────►                  │
-         │  (also pushes to jump list)               │
+         │  ──► run-hook 'action-push-functions ──► │
+         │         │                                 │
+         │         └── helixel--jump-list-push       │
          │                                           │
     ; / C-u ;                                    C-o / C-i
     (buffer-local, push-mark)                    (global, goto-char + switch-buffer)
@@ -589,4 +665,4 @@ helixel--action-ring (buffer-local)          helixel--jump-list (global)
 
 - Use `(helixel-test-with-buffer "content" body...)` for buffer tests
 - Set `this-command` and `last-command` before calling functions that use them
-- 305 ERT tests covering search, find-char, movement, textobj, surround, action tracking, history, and session management
+- 316 ERT tests covering search, find-char, movement, textobj, surround, action tracking, history, and session management

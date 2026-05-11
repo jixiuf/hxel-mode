@@ -106,11 +106,68 @@ nil means charwise, `line' means linewise, `rect' means rectangle.")
 MODE is a major or minor mode symbol.  STATE is a helixel state symbol.
 Stores mode-specific helixel bindings registered via `helixel-define-key'.")
 
+;; ── Command definition macro ──
+;;
+;; All helixel commands use `helixel-define-command' to declare their
+;; action metadata.  Tracking code (action-start, direction, edit
+;; recording, highlight clearing, visual-mode tracking) is expanded
+;; inline at compile time — zero hooks, zero advice.
+
+(defvar helixel--inhibit-action-track nil
+  "When non-nil, `helixel-action-start' and visual tracking are no-ops.
+Bound during `.` repeat to prevent double-recording actions.")
+
+(defmacro helixel-define-command (name metadata &rest body)
+  "Define a helixel command NAME with METADATA auto-tracking.
+
+METADATA is a plist:
+  :category      CAT  — action category (movement, edit, search, state, etc.)
+  :subcat        SUB  — action subcategory (word, kill, insert, etc.)
+  :dir           DIR  — direction for n/N repeat context (forward, backward)
+  :edit-op       OP   — calls (helixel--record-edit OP)
+  :clear-highlights    — default t for :category movement, nil otherwise
+  :params        PARAM-LIST  — optional function parameter list (e.g., (&optional count))
+
+All tracking code is expanded inline at compile time — zero hooks, zero advice.
+The command body contains only business logic.
+If the body begins with (interactive ...), that form is extracted and placed
+before the tracking code; otherwise (interactive) is inserted automatically."
+  (declare (indent 2))
+  (let* ((cat (plist-get metadata :category))
+         (sub (plist-get metadata :subcat))
+         (dir (plist-get metadata :dir))
+         (op  (plist-get metadata :edit-op))
+         (clear (if (plist-member metadata :clear-highlights)
+                    (plist-get metadata :clear-highlights)
+                  (eq cat 'movement)))
+         (has-interactive (and (consp (car body))
+                              (eq (caar body) 'interactive)))
+         (interactive-form (if has-interactive (car body) '(interactive)))
+         (rest-body (if has-interactive (cdr body) body))
+         (params (plist-get metadata :params)))
+    `(defun ,name ,(or params ())
+       ,(format "Helixel %s.%s command." cat sub)
+       ,interactive-form
+       ;; ── Action tracking (for ; and C-o/C-i) ──
+       (helixel-action-start ',cat ',sub)
+       ;; ── Direction (for n/N repeat) ──
+       ,@(when dir `((helixel--live-cat-set-dir ',dir)))
+       ;; ── Edit recording (for . repeat) ──
+       ,@(when op  `((helixel--record-edit ',op)))
+       ;; ── Highlight clearing ──
+       ,@(when clear '((helixel--clear-highlights)))
+       ;; ── Body (pure business logic) ──
+       ,@rest-body
+       ;; ── Visual-mode tracking (for . replay of movements) ──
+       (when (eq helixel--current-state 'visual)
+         (helixel--track-visual-move ',name)))))
+
 ;; Wire textobj hooks for action recording and visual state detection.
 (setq helixel-textobj-action-function #'helixel-action-start)
 (setq helixel-textobj-visual-state-p-function
       (lambda () (eq helixel--current-state 'visual)))
 (setq helixel-jump-cleanup-function #'helixel--clear-data)
+(add-hook 'helixel-action-push-functions #'helixel--jump-list-push)
 
 (defun helixel--unload-current-state ()
   "Deactivate the minor mode described by `helixel--current-state'."
@@ -149,20 +206,15 @@ Accumulates consecutive same-command moves by incrementing count."
         (setq helixel--repeat-sel-ctx
               `(:kind movement :moves (,entry)))))))
 
-(defun helixel-insert ()
-  "Switch to insert state at the beginning of the selection."
-  (interactive)
-  (helixel-action-start 'state 'insert)
-  (helixel--record-edit 'insert-text)
+(helixel-define-command helixel-insert
+  (:category state :subcat insert :edit-op insert-text)
   (if (use-region-p)
       (goto-char (region-beginning)))
   (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
-(defun helixel-insert-exit ()
-  "Switch to normal state."
-  (interactive)
-  (helixel-action-start 'state 'exit)
+(helixel-define-command helixel-insert-exit
+  (:category state :subcat exit)
   (when (and helixel--change-track-marker
              (member (helixel-edit-op helixel--last-tx)
                      '(change insert-text)))
@@ -195,7 +247,7 @@ OPTIONS is a plist supporting:
   :advice              — inject :before advice instead of creating wrapper
   :clear-highlights BOOL — clear highlights before executing (default t)
 
-Wrapper mode (default):
+Wrapper mode (default): delegates to `helixel-define-command'.
   (helixel-define-movement helixel-forward-char forward-char char :dir forward)
 
 Advice mode:
@@ -207,9 +259,9 @@ Without highlights clearing:
   (declare (indent 1))
   (let* ((dir (plist-get options :dir))
          (advicep (plist-get options :advice))
-         (clear-highlights (if (plist-member options :clear-highlights)
-                               (plist-get options :clear-highlights)
-                             t)))
+         (clear (if (plist-member options :clear-highlights)
+                    (plist-get options :clear-highlights)
+                  t)))
     (if advicep
         `(advice-add #',builtin :before
                      (lambda (&rest _)
@@ -217,17 +269,12 @@ Without highlights clearing:
                        (helixel-action-start 'movement ',type)
                        ,(when dir
                           `(helixel--live-cat-set-dir ',dir))
-                       ,@(when clear-highlights
+                       ,@(when clear
                            '((helixel--clear-highlights)))))
-      `(defun ,name ()
-         ,(format "Helixel movement wrapping `%s'." builtin)
-         (interactive)
-         (helixel-action-start 'movement ',type)
-         ,(when dir `(helixel--live-cat-set-dir ',dir))
-         ,@(when clear-highlights
-             '((helixel--clear-highlights)))
-         (call-interactively #',builtin)
-         (helixel--track-visual-move #',name)))))
+      `(helixel-define-command ,name
+         (:category movement :subcat ,type :dir ,dir
+          :clear-highlights ,clear)
+         (call-interactively #',builtin)))))
 
 (defmacro helixel-define-movements (&rest specs)
   "Register multiple movements from SPECS.
@@ -270,138 +317,93 @@ thingatpt.  Defaults to \\='word."
       (activate-mark))))
 (defmacro helixel--with-movement-surround (&rest body)
   "Create a region around movement defined in BODY.
+If a region is already active, no new region is created.
 
-If a region is already active, no new region is created."
-  `(progn
-     (helixel--clear-highlights)
-     (let ((current (point)))
-       ,@body
-       (unless (use-region-p)
-         (push-mark current t 'activate))
-       (helixel--track-visual-move this-command))))
+Note: `helixel-define-command' handles `clear-highlights' and `track-visual-move'
+automatically, so this macro only does push-mark + activate."
+  `(let ((current (point)))
+     ,@body
+     (unless (use-region-p)
+       (push-mark current t 'activate))))
 
-(defun helixel-forward-word-start ()
-  "Move to start of the next word."
-  (interactive)
-  (helixel-action-start 'movement 'word)
-  (helixel--live-cat-set-dir 'forward)
+(helixel-define-command helixel-forward-word-start
+  (:category movement :subcat word :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-word)))
 
-(defun helixel-forward-word-end ()
-  "Move to the end of the current word."
-  (interactive)
-  (helixel-action-start 'movement 'word)
-  (helixel--live-cat-set-dir 'forward)
+(helixel-define-command helixel-forward-word-end
+  (:category movement :subcat word :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-word)))
 
-(defun helixel-backward-word-start ()
-  "Move to previous word."
-  (interactive)
-  (helixel-action-start 'movement 'word)
-  (helixel--live-cat-set-dir 'backward)
+(helixel-define-command helixel-backward-word-start
+  (:category movement :subcat word :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-word -1)))
 
-(defun helixel-backward-word-end ()
-  "Move to previous word."
-  (interactive)
-  (helixel-action-start 'movement 'word)
-  (helixel--live-cat-set-dir 'backward)
+(helixel-define-command helixel-backward-word-end
+  (:category movement :subcat word :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-word -1)))
 
-(defun helixel-forward-WORD-start ()
-  "Move to start of the next long word."
-  (interactive)
-  (helixel-action-start 'movement 'WORD)
-  (helixel--live-cat-set-dir 'forward)
+(helixel-define-command helixel-forward-WORD-start
+  (:category movement :subcat WORD :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-WORD)))
 
-(defun helixel-forward-WORD-end ()
-  "Move to end of this long word."
-  (interactive)
-  (helixel-action-start 'movement 'WORD)
-  (helixel--live-cat-set-dir 'forward)
+(helixel-define-command helixel-forward-WORD-end
+  (:category movement :subcat WORD :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-WORD)))
 
-(defun helixel-backward-WORD ()
-  "Move to previous long word."
-  (interactive)
-  (helixel-action-start 'movement 'WORD)
-  (helixel--live-cat-set-dir 'backward)
+(helixel-define-command helixel-backward-WORD
+  (:category movement :subcat WORD :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-WORD -1)))
 
 
-(defun helixel-backward-WORD-end ()
-  "Move to previous long word."
-  (interactive)
-  (helixel-action-start 'movement 'WORD)
-  (helixel--live-cat-set-dir 'backward)
+(helixel-define-command helixel-backward-WORD-end
+  (:category movement :subcat WORD :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-WORD -1)))
 
-(defun helixel-forward-symbol-start ()
-  "Move to start of the next symbol."
-  (interactive)
-  (helixel-action-start 'movement 'symbol)
-  (helixel--live-cat-set-dir 'forward)
+(helixel-define-command helixel-forward-symbol-start
+  (:category movement :subcat symbol :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-symbol)))
 
-(defun helixel-forward-symbol-end ()
-  "Move to the end of the current symbol."
-  (interactive)
-  (helixel-action-start 'movement 'symbol)
-  (helixel--live-cat-set-dir 'forward)
+(helixel-define-command helixel-forward-symbol-end
+  (:category movement :subcat symbol :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-symbol)))
 
-(defun helixel-backward-symbol-start ()
-  "Move to previous symbol."
-  (interactive)
-  (helixel-action-start 'movement 'symbol)
-  (helixel--live-cat-set-dir 'backward)
+(helixel-define-command helixel-backward-symbol-start
+  (:category movement :subcat symbol :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-symbol -1)))
 
-(defun helixel-backward-symbol-end ()
-  "Move to previous symbol."
-  (interactive)
-  (helixel-action-start 'movement 'symbol)
-  (helixel--live-cat-set-dir 'backward)
+(helixel-define-command helixel-backward-symbol-end
+  (:category movement :subcat symbol :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-symbol -1)))
 
-(defun helixel-go-beginning-buffer ()
-  "Go to beginning of buffer, or go to line N if a numeric prefix arg is given."
-  (interactive)
-  (helixel-action-start 'movement 'goto)
-  (helixel--clear-highlights)
+(helixel-define-command helixel-go-beginning-buffer
+  (:category movement :subcat goto)
   (if current-prefix-arg
       (goto-line (prefix-numeric-value current-prefix-arg))
-    (call-interactively #'beginning-of-buffer))
-  (helixel--track-visual-move this-command))
+    (call-interactively #'beginning-of-buffer)))
 
-(defun helixel-goto-line (&optional arg)
-  "Go to line ARG, recording session."
+(helixel-define-command helixel-goto-line
+  (:category movement :subcat goto :params (&optional arg))
   (interactive "P")
-  (helixel-action-start 'movement 'goto)
-  (goto-line (if arg (prefix-numeric-value arg) (goto-line-read-args)))
-  (helixel--track-visual-move this-command))
+  (goto-line (if arg
+                 (prefix-numeric-value arg)
+               (goto-line-read-args))))
 
 
-(defun helixel-select-line (&optional count)
-  "Select COUNT lines (default 1), moving the cursor to the end.
-When called with a numeric prefix, select that many lines at once.
-When extending an existing line selection, increment the stored count."
+(helixel-define-command helixel-select-line
+  (:category movement :subcat lineselect :dir forward :params (&optional count) :clear-highlights nil)
   (interactive "p")
-  (helixel-action-start 'movement 'lineselect)
-  (helixel--live-cat-set-dir 'forward)
   (let ((n (or count 1))
         (extending (and (region-active-p) (eolp)))
         (current-prefix-arg nil))
@@ -421,12 +423,9 @@ When extending an existing line selection, increment the stored count."
             (list :fn #'helixel-select-line :kind 'line
                   :count (if extending (+ prev-count n) n))))))
 
-(defun helixel-select-line-up (&optional count)
-  "Select COUNT lines upward (default 1).
-When extending an existing line selection, increment the stored count."
+(helixel-define-command helixel-select-line-up
+  (:category movement :subcat lineselect :dir backward :params (&optional count) :clear-highlights nil)
   (interactive "p")
-  (helixel-action-start 'movement 'lineselect)
-  (helixel--live-cat-set-dir 'backward)
   (let ((n (or count 1))
         (extending (and (region-active-p) (bolp)))
         (current-prefix-arg nil))
@@ -446,12 +445,9 @@ When extending an existing line selection, increment the stored count."
             (list :fn #'helixel-select-line-up :kind 'line
                   :count (if extending (+ prev-count n) n))))))
 
-(defun helixel-select-rectangle (&optional count)
-  "Start or extend rectangle selection by COUNT lines (default 1).
-If `rectangle-mark-mode' is already active, extend the rectangle
-down COUNT lines.  Otherwise, start a rectangle selection at point."
+(helixel-define-command helixel-select-rectangle
+  (:category movement :subcat rectselect :params (&optional count) :clear-highlights nil)
   (interactive "p")
-  (helixel-action-start 'movement 'rectselect)
   (let ((n (or count 1))
         (extending rectangle-mark-mode)
         (current-prefix-arg nil))
@@ -619,20 +615,13 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
       (forward-visible-line 1))
     (kill-region (region-beginning) (region-end)))))
 
-(defun helixel-kill-thing-at-point ()
-   "Kill current region or delete char at point.
-When selection is line-wise, tag the killed text with a line-wise yank-handler.
-When selection is rect, tag with a rect-wise yank-handler."
-   (interactive)
-   (helixel--record-edit 'kill)
-   (helixel--delete-selection)
-   (helixel--clear-data))
+(helixel-define-command helixel-kill-thing-at-point
+  (:category edit :subcat kill :edit-op kill)
+  (helixel--delete-selection)
+  (helixel--clear-data))
 
-(defun helixel-change-thing-at-point ()
-  "Remove the current region or current point and enter insert-mode.
-When selection is rect, replay inserted text on all rect lines."
-  (interactive)
-  (helixel--record-edit 'change)
+(helixel-define-command helixel-change-thing-at-point
+  (:category edit :subcat change :edit-op change)
   (if (and (use-region-p) (eq (helixel--selection-type) 'rect))
       (helixel--rect-change)
     (helixel--delete-selection)
@@ -664,10 +653,8 @@ When selection is rect, replay inserted text on all rect lines."
       (setq eol (point))
       (= cur eol))))
 
-(defun helixel-insert-after ()
-  "Swap to insert mode at the end of the selection."
-  (interactive)
-  (helixel--record-edit 'insert-text)
+(helixel-define-command helixel-insert-after
+  (:category state :subcat insert :edit-op insert-text)
   (if (use-region-p)
       (goto-char (region-end))
     (unless (helixel--end-of-line-p)
@@ -675,36 +662,28 @@ When selection is rect, replay inserted text on all rect lines."
   (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
-(defun helixel-insert-beginning-line ()
-  "Move current point to the beginning of line and enter insert mode."
-  (interactive)
-  (helixel--record-edit 'insert-text)
+(helixel-define-command helixel-insert-beginning-line
+  (:category state :subcat insert :edit-op insert-text)
   (beginning-of-line)
   (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
-(defun helixel-insert-after-end-line ()
-  "Move current point to the end of line and enter insert mode."
-  (interactive)
-  (helixel--record-edit 'insert-text)
+(helixel-define-command helixel-insert-after-end-line
+  (:category state :subcat insert :edit-op insert-text)
   (end-of-line)
   (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
-(defun helixel-insert-newline ()
-  "Insert newline and change `helixel--current-state' to INSERT mode."
-  (interactive)
-  (helixel--record-edit 'insert-text)
+(helixel-define-command helixel-insert-newline
+  (:category state :subcat insert :edit-op insert-text)
   (helixel--clear-data)
   (end-of-line)
   (newline-and-indent)
   (setq helixel--change-track-marker (point-marker))
   (helixel--switch-state 'insert))
 
-(defun helixel-insert-prevline ()
-  "Insert line above and change `helixel--current-state' to INSERT mode."
-  (interactive)
-  (helixel--record-edit 'insert-text)
+(helixel-define-command helixel-insert-prevline
+  (:category state :subcat insert :edit-op insert-text)
   (helixel--clear-data)
   (beginning-of-line)
   (let ((electric-indent-mode nil))
@@ -724,6 +703,7 @@ When selection is rect, replay inserted text on all rect lines."
   "Replace selection with CHAR.
 If no region is active, replace character at point."
   (interactive "c")
+  (helixel-action-start 'edit 'replace-char)
   (helixel--record-edit 'replace-char :char char)
   (if (use-region-p)
       (helixel--replace-region
@@ -731,11 +711,8 @@ If no region is active, replace character at point."
        (make-string (- (region-end) (region-beginning)) char))
     (helixel--replace-region (point) (1+ (point)) char)))
 
-(defun helixel-replace ()
-  "Replace selection with the last stretch of killed text.
-Handles line-wise and rect content appropriately."
-  (interactive)
-  (helixel--record-edit 'replace)
+(helixel-define-command helixel-replace
+  (:category edit :subcat replace :edit-op replace)
   (if (= 0 (length kill-ring))
       (message "nothing to yank")
     (let* ((text (current-kill 0 t))
@@ -773,12 +750,8 @@ Handles line-wise and rect content appropriately."
            (helixel-yank))))
       (helixel--clear-data))))
 
-(defun helixel-kill-ring-save ()
-  "Save region to `kill-ring' and clear Helixel selection data.
-When selection is line-wise, tag the text with a line-wise yank-handler.
-When selection is rect, tag with a rect-wise yank-handler."
-  (interactive)
-  (helixel--record-edit 'copy)
+(helixel-define-command helixel-kill-ring-save
+  (:category edit :subcat copy :edit-op copy)
   (when (use-region-p)
     (cond
      ((eq (helixel--selection-type) 'rect)
@@ -792,15 +765,9 @@ When selection is rect, tag with a rect-wise yank-handler."
       (call-interactively #'kill-ring-save))))
   (helixel--clear-data))
 
-(defun helixel-yank (&optional arg)
-  "Paste from kill ring after point.
-Line-wise kills are pasted below the current line.
-Rect kills are pasted as a rectangle.
-Otherwise behaves like `yank'.
-
-ARG is passed to `yank'."
+(helixel-define-command helixel-yank
+  (:category edit :subcat paste-after :edit-op paste-after :params (&optional arg))
   (interactive "*P")
-  (helixel--record-edit 'paste-after)
   (cond
    ((helixel--rect-wise-kill-p)
     (let ((lines (nth 1 (get-text-property
@@ -814,15 +781,9 @@ ARG is passed to `yank'."
    (t
     (yank arg))))
 
-(defun helixel-yank-before (&optional arg)
-  "Paste from kill ring before point.
-Line-wise kills are pasted above the current line.
-Rect kills are pasted as a rectangle.
-Otherwise behaves like `yank'.
-
-ARG is passed to `yank'."
+(helixel-define-command helixel-yank-before
+  (:category edit :subcat paste-before :edit-op paste-before :params (&optional arg))
   (interactive "*P")
-  (helixel--record-edit 'paste-before)
   (cond
    ((helixel--rect-wise-kill-p)
     (let ((lines (nth 1 (get-text-property
@@ -836,17 +797,13 @@ ARG is passed to `yank'."
    (t
     (yank arg))))
 
-(defun helixel-indent-left ()
-  "Indent region leftward and clear Helixel selection data."
-  (interactive)
-  (helixel--record-edit 'indent-left)
+(helixel-define-command helixel-indent-left
+  (:category edit :subcat indent-left :edit-op indent-left)
   (call-interactively #'indent-rigidly-left)
   (helixel--clear-data))
 
-(defun helixel-indent-right ()
-  "Indent region rightward and clear Helixel selection data."
-  (interactive)
-  (helixel--record-edit 'indent-right)
+(helixel-define-command helixel-indent-right
+  (:category edit :subcat indent-right :edit-op indent-right)
   (call-interactively #'indent-rigidly-right)
   (helixel--clear-data))
 
@@ -1325,23 +1282,6 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
         (buffer-list))
   (setq helixel-global-mode (if status status 1)))
 
-(defun helixel--pre-command-clear-selection ()
-  "Deactivate mark before non-helixel commands to prevent selection extension.
-Helixel commands (namespace `helixel-') and a few exceptions are
-allowed to handle the active selection themselves."
-  (when (and (boundp 'helixel--current-state)
-             (memq helixel--current-state '(normal motion))
-             (region-active-p))
-    (let ((name (symbol-name this-command)))
-      (unless (or (string-prefix-p "helixel-" name)
-                  ;; todo: defcustom
-                  (memq this-command '(keyboard-quit undo undo-redo
-                                       self-insert-command
-                                       digit-argument
-                                       negative-argument
-                                       universal-argument)))
-        (deactivate-mark t)))))
-
 ;;;###autoload
 (defun helixel-mode ()
   "Toggle global Helixel mode."
@@ -1354,7 +1294,6 @@ allowed to handle the active selection themselves."
         (advice-add #'keyboard-quit :before #'helixel--clear-data)
         (advice-add #'keyboard-quit :before #'helixel--cancel-action)
         (add-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)
-        (add-hook 'pre-command-hook #'helixel--pre-command-clear-selection)
         (helixel-mode-maybe-activate 1))
     (cond
      (helixel-normal-state (helixel-normal-state -1))
@@ -1364,7 +1303,7 @@ allowed to handle the active selection themselves."
     (advice-remove #'keyboard-quit #'helixel--clear-data)
     (advice-remove #'keyboard-quit #'helixel--cancel-action)
     (remove-hook 'after-change-major-mode-hook #'helixel-mode-maybe-activate)
-    (remove-hook 'pre-command-hook #'helixel--pre-command-clear-selection)))
+    (remove-hook 'helixel-action-push-functions #'helixel--jump-list-push)))
 
 (helixel-define-jump-command 'xref-find-definitions)
 (helixel-define-jump-command 'xref-find-references)

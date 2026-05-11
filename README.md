@@ -317,16 +317,62 @@ their start position via advice.  To register your own commands:
 
 ## Extend
 
+### Defining Commands
+
+Use `helixel-define-command` to define new commands with automatic session
+tracking, repeat recording, and highlight clearing.  The macro expands all
+tracking boilerplate at compile time — your body only contains business logic.
+
+```elisp
+;; Movement command — auto-tracks ; and C-o/C-i sessions
+(helixel-define-command my-forward-two-words
+  (:category movement :subcat word :dir forward)
+  (helixel-forward-word-start)
+  (helixel-forward-word-start))
+
+(helixel-define-key 'normal "W" #'my-forward-two-words)
+
+;; Edit command — auto-records for . repeat
+(helixel-define-command my-delete-line
+  (:category edit :subcat kill :edit-op kill)
+  (beginning-of-line)
+  (push-mark (pos-eol) t t)
+  (kill-region (region-beginning) (region-end)))
+
+(helixel-define-key 'normal "D" #'my-delete-line)
+```
+
+Metadata plist keys:
+| Key | Purpose |
+|-----|--------|
+| `:category` | Action category for `;` / `C-o`/`C-i` (movement, edit, search, state) |
+| `:subcat` | Action subcategory (word, kill, insert, etc.) |
+| `:dir` | Direction for n/N repeat context (forward, backward) |
+| `:edit-op` | Operator symbol for `.` repeat recording |
+| `:clear-highlights` | Clear highlights before body (default t for movement, nil otherwise) |
+| `:params` | Optional function parameter list, e.g. `(&optional count)` |
+
+### Wrapping Builtins
+
+To wrap an existing Emacs movement command with tracking:
+
+```elisp
+;; Wrapper mode — creates a new command
+(helixel-define-movement helixel-forward-paragraph forward-paragraph movement-goto)
+(helixel-define-key 'normal "]" #'helixel-forward-paragraph)
+
+;; Advice mode — injects :before advice directly into the builtin
+(helixel-define-movement nil forward-char char :dir forward :advice)
+```
+
+### Keybindings & Ex Commands
+
 ```elisp
 ;; Add a keybinding
 (helixel-define-key 'space "w" #'my-command)
 
 ;; Add a typable command
 (helixel-define-ex-command "format" #'format-all-buffer)
-
-;; Wrap a builtin movement with session tracking (supports ;)
-(helixel-define-movement helixel-forward-paragraph forward-paragraph movement-goto)
-(helixel-define-key 'normal "]" #'helixel-forward-paragraph)
 ```
 
 ### Custom Text Object
