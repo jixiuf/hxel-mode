@@ -1303,24 +1303,29 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
 ;; kinds.  Legacy `:fn'-bearing descriptors still work via the default method.
 
 (cl-defmethod helixel-sel-recreate ((_kind (eql line)) ctx)
-  "Replay a linewise selection of (:count N) lines.
-(:dir up) selects upward via `helixel-select-line-up'; default is downward."
+  "Replay a linewise selection from CTX.
+\(:count N) controls the number of lines; \(:dir up) selects upward
+via `helixel-select-line-up', default is downward."
   (let ((n (or (plist-get ctx :count) 1)))
     (if (eq (plist-get ctx :dir) 'up)
         (helixel-select-line-up n)
       (helixel-select-line n))))
 
 (cl-defmethod helixel-sel-display ((_kind (eql line)) ctx)
+  "Render line selection CTX as \"L\" or \"L^\" (upward)."
   (if (eq (plist-get ctx :dir) 'up) "L^" "L"))
 
-(cl-defmethod helixel-sel-display ((_kind (eql rect)) _ctx) "rect")
+(cl-defmethod helixel-sel-display ((_kind (eql rect)) _ctx)
+  "Render rectangular selection as the literal \"rect\"."
+  "rect")
 
 (cl-defmethod helixel-sel-display ((_kind (eql movement)) ctx)
+  "Render movement CTX as \"vN\" where N is the total move count."
   (let ((n (apply #'+ (mapcar #'cdr (plist-get ctx :moves)))))
     (format "v%d" n)))
 
 (cl-defmethod helixel-sel-recreate ((_kind (eql rect)) ctx)
-  "Replay a rectangular selection of (:count N) rows."
+  "Replay a rectangular selection from CTX (uses \\(:count N) rows)."
   (helixel-select-rectangle (or (plist-get ctx :count) 1)))
 
 ;; ---------------------------------------------------------------------------

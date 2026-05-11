@@ -2009,7 +2009,7 @@ accepts a single optional COUNT argument."
     (funcall cmd (or (plist-get ctx :count) 1))))
 
 (cl-defmethod helixel-sel-display ((_kind (eql textobj)) ctx)
-  "Render textobj as the command name with its `helixel-mark-' prefix stripped."
+  "Render CTX as the textobj command name without the `helixel-mark-' prefix."
   (if-let* ((cmd (plist-get ctx :command)))
       (replace-regexp-in-string "^helixel-mark-" "" (symbol-name cmd))
     "textobj"))
