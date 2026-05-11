@@ -166,12 +166,13 @@ e.g. \"d.textobj\", \"c.line\", \"p\", \"R\", \"<\"."
 (cl-defgeneric helixel-sel-recreate (kind ctx)
   "Recreate a selection at point given descriptor KIND and full CTX plist.
 Methods specialise on KIND via `(eql SYMBOL)'.  CTX carries any
-additional fields (:count, :delimiter, :moves, ...).")
+additional fields (:count, :delimiter, :moves, :command, ...).
+The default method is a no-op so unknown / metadata-only kinds
+silently leave point alone.")
 
-(cl-defmethod helixel-sel-recreate (_kind ctx)
-  "Default: legacy `:fn' descriptor.  Calls (FN COUNT) when present."
-  (when-let* ((fn (plist-get ctx :fn)))
-    (funcall fn (or (plist-get ctx :count) 1))))
+(cl-defmethod helixel-sel-recreate (_kind _ctx)
+  "Default: do nothing.  Overridden by methods on `(eql SYMBOL)'."
+  nil)
 
 (defvar helixel--current-state)
 
