@@ -392,55 +392,85 @@ If a region is already active, no new region is created."
   (helixel--track-visual-move this-command))
 
 
-(defun helixel-select-line ()
-  "Select the current line, moving the cursor to the end."
-  (interactive)
+(defun helixel-select-line (&optional count)
+  "Select COUNT lines (default 1), moving the cursor to the end.
+When called with a numeric prefix, select that many lines at once.
+When extending an existing line selection, increment the stored count."
+  (interactive "p")
   (helixel-action-start 'movement 'lineselect)
   (helixel--live-cat-set-dir 'forward)
-  (if (and (region-active-p) (eolp))
-      (progn
+  (let ((n (or count 1))
+        (extending (and (region-active-p) (eolp)))
+        (current-prefix-arg nil))
+    (if extending
+        (dotimes (_ n)
+          (call-interactively #'next-line)
+          (end-of-line))
+      (beginning-of-line)
+      (push-mark-command t t)
+      (end-of-line)
+      (dotimes (_ (1- n))
         (call-interactively #'next-line)
-        (end-of-line))
-    (beginning-of-line)
-    (push-mark-command t t)
-    (end-of-line))
-  (setq helixel--selection-type 'line)
-  (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'line)))
+        (end-of-line)))
+    (setq helixel--selection-type 'line)
+    (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
+      (setq helixel--repeat-sel-ctx
+            (list :fn #'helixel-select-line :kind 'line
+                  :count (if extending (+ prev-count n) n))))))
 
-(defun helixel-select-line-up ()
-  "Select the current line, extending upward on every subsequent call."
-  (interactive)
+(defun helixel-select-line-up (&optional count)
+  "Select COUNT lines upward (default 1).
+When extending an existing line selection, increment the stored count."
+  (interactive "p")
   (helixel-action-start 'movement 'lineselect)
   (helixel--live-cat-set-dir 'backward)
-  (if (and (region-active-p) (bolp))
-      (progn
+  (let ((n (or count 1))
+        (extending (and (region-active-p) (bolp)))
+        (current-prefix-arg nil))
+    (if extending
+        (dotimes (_ n)
+          (call-interactively #'previous-line)
+          (beginning-of-line))
+      (end-of-line)
+      (push-mark-command t t)
+      (beginning-of-line)
+      (dotimes (_ (1- n))
         (call-interactively #'previous-line)
-        (beginning-of-line))
-    (end-of-line)
-    (push-mark-command t t)
-    (beginning-of-line))
-  (setq helixel--selection-type 'line)
-  (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'line)))
+        (beginning-of-line)))
+    (setq helixel--selection-type 'line)
+    (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
+      (setq helixel--repeat-sel-ctx
+            (list :fn #'helixel-select-line-up :kind 'line
+                  :count (if extending (+ prev-count n) n))))))
 
-(defun helixel-select-rectangle ()
-  "Start or extend rectangle selection.
+(defun helixel-select-rectangle (&optional count)
+  "Start or extend rectangle selection by COUNT lines (default 1).
 If `rectangle-mark-mode' is already active, extend the rectangle
-down one line.  Otherwise, start a rectangle selection at point."
-  (interactive)
+down COUNT lines.  Otherwise, start a rectangle selection at point."
+  (interactive "p")
   (helixel-action-start 'movement 'rectselect)
-  (if rectangle-mark-mode
-      (progn
-        (if (or (> (point) (mark))
-                (and (= (point) (mark))
-                     (eq last-command 'helixel-select-rectangle)))
-            (forward-line 1)
-          (forward-line -1))
-        (rectangle--reset-point-crutches))
-    (helixel--switch-state 'visual)
-    (push-mark (point) t t)
-    (rectangle-mark-mode 1))
-  (setq helixel--selection-type 'rect)
-  (setq helixel--repeat-sel-ctx (list :fn this-command :kind 'rect)))
+  (let ((n (or count 1))
+        (extending rectangle-mark-mode)
+        (current-prefix-arg nil))
+    (if extending
+        (dotimes (_ n)
+          (if (or (> (point) (mark))
+                  (and (= (point) (mark))
+                       (eq last-command 'helixel-select-rectangle)))
+              (forward-line 1)
+            (forward-line -1))
+          (rectangle--reset-point-crutches))
+      (helixel--switch-state 'visual)
+      (push-mark (point) t t)
+      (rectangle-mark-mode 1)
+      (dotimes (_ (1- n))
+        (forward-line 1)
+        (rectangle--reset-point-crutches)))
+    (setq helixel--selection-type 'rect)
+    (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
+      (setq helixel--repeat-sel-ctx
+            (list :fn #'helixel-select-rectangle :kind 'rect
+                  :count (if extending (+ prev-count n) n))))))
 
 ;;; Line-wise helpers
 

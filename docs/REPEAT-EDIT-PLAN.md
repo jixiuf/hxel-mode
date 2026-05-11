@@ -1,8 +1,8 @@
 # Repeat Edit — Implementation History & Roadmap
 
-## Current Status (2026-05-07)
+## Current Status (2026-05-08)
 
-**Completed**: Phases 1–10, all 254 tests passing.
+**Completed**: Phases 1–11, all 258 tests passing.
 **Architecture**: Transaction-driven — single schema shared by repeat, action ring, and edit commands.
 
 ## Module Structure
@@ -123,9 +123,15 @@ helixel--live-edit-set(tx)         (action ring — ; jumping consumer)
 
 ## Future Work
 
-### Priority 1 — Count prefix support
-**Problem**: `3 x d` (select 3 lines, delete) doesn't store count.
-**Approach**: Add `:count` to `sel-ctx` plist.
+### Priority 1 — Count prefix support  ✓ DONE (Phase 11)
+**Problem**: `3 x d` (select 3 lines, delete) didn't store count.
+**Solution**: Added `:count` to `sel-ctx` plist. `helixel-select-line`,
+`helixel-select-line-up`, and `helixel-select-rectangle` now:
+- Accept `&optional count` (prefix arg)
+- Accumulate count on consecutive calls (extending existing selection)
+- Store `:count N` in `helixel--repeat-sel-ctx`
+`helixel--recreate-selection` passes count to `:fn` during replay.
+4 new tests added.
 
 ### Priority 2 — `C-u .` edit history browsing
 **Approach**: Reuse action ring + `helixel-edit-display` for completing-read.

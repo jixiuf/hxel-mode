@@ -108,12 +108,14 @@ Also pushes an edit action to the ring for `;' jumping."
 
 (defun helixel--recreate-selection (sel-ctx)
   "Recreate a selection from SEL-CTX at the current point.
-Dispatches on :kind to use the appropriate replay strategy."
+Dispatches on :kind to use the appropriate replay strategy.
+Respects :count for multi-line/multi-step selections."
   (when sel-ctx
-    (let ((kind (plist-get sel-ctx :kind)))
+    (let ((kind (plist-get sel-ctx :kind))
+          (count (or (plist-get sel-ctx :count) 1)))
       (cond
        ((plist-get sel-ctx :fn)
-        (funcall (plist-get sel-ctx :fn)))
+        (funcall (plist-get sel-ctx :fn) count))
        ((eq kind 'movement)
         (let ((helixel--current-state 'visual))
           (dolist (m (reverse (plist-get sel-ctx :moves)))

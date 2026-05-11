@@ -3568,5 +3568,73 @@ The leading newline is part of content so mt adds newline only before close."
     (goto-char 1) (push-mark (point) nil t) (goto-char 6) (activate-mark)
     (helixel--surround-add ?\< ?\>)
     (should (equal (buffer-string) "<hello>"))))
+;; ---------------------------------------------------------------------------
+;; Count-aware repeat tests
+
+(ert-deftest helixel-test-repeat-count-line-select ()
+  "Test `3x d .` repeats killing 3 lines."
+  (helixel-test-with-buffer "line1\nline2\nline3\nline4\nline5\nline6\n"
+    (goto-char 1)
+    ;; Select 3 lines: x x x
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line this-command 'helixel-select-line)
+    (helixel-select-line)
+    ;; Verify count stored
+    (should (= (plist-get helixel--repeat-sel-ctx :count) 3))
+    ;; Kill
+    (setq last-command 'helixel-select-line this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (should (string= (buffer-string) "line4\nline5\nline6\n"))
+    ;; Repeat at line4 — should kill 3 lines again
+    (goto-char 1)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) ""))))
+
+(ert-deftest helixel-test-repeat-count-prefix-line ()
+  "Test `3x d .` with prefix arg selects 3 lines at once."
+  (helixel-test-with-buffer "line1\nline2\nline3\nline4\nline5\nline6\n"
+    (goto-char 1)
+    ;; Select 3 lines at once with prefix
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line 3)
+    ;; Verify count stored
+    (should (= (plist-get helixel--repeat-sel-ctx :count) 3))
+    ;; Kill
+    (setq last-command 'helixel-select-line this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (should (string= (buffer-string) "line4\nline5\nline6\n"))
+    ;; Repeat
+    (goto-char 1)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) ""))))
+
+(ert-deftest helixel-test-repeat-count-line-up ()
+  "Test count-aware repeat for line-up selection."
+  (helixel-test-with-buffer "line1\nline2\nline3\nline4\n"
+    (goto-char (point-max))
+    (forward-line -1)
+    ;; Select 2 lines upward
+    (setq last-command nil this-command 'helixel-select-line-up)
+    (helixel-select-line-up 2)
+    (should (= (plist-get helixel--repeat-sel-ctx :count) 2))
+    ;; Kill
+    (setq last-command 'helixel-select-line-up this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (should (string= (buffer-string) "line1\nline2\n"))))
+
+(ert-deftest helixel-test-select-line-count-stored-in-tx ()
+  "Test that count is preserved through record-edit into the transaction."
+  (helixel-test-with-buffer "a\nb\nc\nd\n"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    ;; The tx sel should have count 2
+    (should (= (plist-get (helixel-edit-sel helixel--last-tx) :count) 2))))
 
 ;;; helixel-test.el ends here
