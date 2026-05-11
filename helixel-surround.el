@@ -49,6 +49,7 @@
 
 (require 'cl-lib)
 (require 'helixel-delimiter)
+(require 'helixel-edit)
 
 (defvar helixel--surround-pairs)
 (defvar helixel--repeat-sel-ctx)
@@ -241,8 +242,7 @@ Reads character, looks up new delimiter, deletes old, adds new."
     (helixel-action-start 'edit 'surround-replace)
     (helixel--record-edit 'surround-replace :new-char new-char)
     (setq helixel--repeat-sel-ctx
-          (list :fn this-command :kind 'textobj
-                :delimiter new-d))))
+          (list :kind 'surround :delimiter new-d))))
 
 (defun helixel--surround-replace-tag (new-tag-name d)
   "Replace surrounding XML tags with NEW-TAG-NAME.
@@ -292,7 +292,7 @@ D is the tag delimiter plist used to locate the tags."
     (helixel-action-start 'edit 'surround-add)
     (helixel--record-edit 'surround-add :char char)
     (setq helixel--repeat-sel-ctx
-          (list :fn this-command :kind 'textobj
+          (list :kind 'surround
                 :delimiter (if is-block
                                (helixel--make-block-delimiter open close)
                              (helixel--make-pair-delimiter open close))))
@@ -308,7 +308,7 @@ D is the tag delimiter plist used to locate the tags."
     (helixel-action-start 'edit 'surround-add)
     (helixel--record-edit 'surround-add-tag :tag tag)
     (setq helixel--repeat-sel-ctx
-          (list :fn this-command :kind 'textobj
+          (list :kind 'surround
                 :delimiter (helixel--make-tag-delimiter)))
     (setq deactivate-mark nil)))
 
@@ -355,10 +355,20 @@ Prompts per type: tag `read-string', all others `read-char'."
            (helixel--record-edit 'surround-replace :tag new-tag
                                  :surround-type 'tag)
            (setq helixel--repeat-sel-ctx
-                 (list :fn this-command :kind 'textobj
+                 (list :kind 'surround
                        :delimiter (helixel--make-tag-delimiter)))))
         (_ (helixel--surround-replace-generic d)))
       (setq deactivate-mark nil))))
+
+;; ============================================================================
+;; Selection-descriptor method
+;; ============================================================================
+
+(cl-defmethod helixel-sel-recreate ((_kind (eql surround)) _ctx)
+  "Surround descriptors carry a `:delimiter' as metadata only.
+Replay of `surround-add' / `surround-delete' / `surround-replace'
+operates on the stored delimiter directly inside `helixel--execute-edit',
+so no region needs to be recreated here.")
 
 (provide 'helixel-surround)
 ;;; helixel-surround.el ends here
