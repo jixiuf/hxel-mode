@@ -1324,6 +1324,15 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
         (helixel-select-line-up n)
       (helixel-select-line n))))
 
+(cl-defmethod helixel-sel-display ((_kind (eql line)) ctx)
+  (if (eq (plist-get ctx :dir) 'up) "L^" "L"))
+
+(cl-defmethod helixel-sel-display ((_kind (eql rect)) _ctx) "rect")
+
+(cl-defmethod helixel-sel-display ((_kind (eql movement)) ctx)
+  (let ((n (apply #'+ (mapcar #'cdr (plist-get ctx :moves)))))
+    (format "v%d" n)))
+
 (cl-defmethod helixel-sel-recreate ((_kind (eql rect)) ctx)
   "Replay a rectangular selection of (:count N) rows."
   (helixel-select-rectangle (or (plist-get ctx :count) 1)))
@@ -1356,7 +1365,10 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
   :runner (lambda (_tx) (helixel-kill-ring-save)))
 (helixel-edit-defop replace       :display "r"
   :runner (lambda (_tx) (helixel-replace)))
-(helixel-edit-defop replace-char  :display "R"
+(helixel-edit-defop replace-char
+  :display (lambda (tx)
+             (let ((c (plist-get (helixel-edit-payload tx) :char)))
+               (if c (format "R[%c]" c) "R")))
   :runner (lambda (tx)
             (helixel-replace-char
              (plist-get (helixel-edit-payload tx) :char))))

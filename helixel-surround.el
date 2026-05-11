@@ -370,16 +370,27 @@ Replay of `surround-add' / `surround-delete' / `surround-replace'
 operates on the stored delimiter directly inside `helixel--execute-edit',
 so no region needs to be recreated here.")
 
+(cl-defmethod helixel-sel-display ((_kind (eql surround)) ctx)
+  (if-let* ((d (plist-get ctx :delimiter)))
+      (format "@%s" (helixel-delimiter-type d))
+    "surround"))
+
 ;; ---------------------------------------------------------------------------
 ;; Edit-op runners (registry consumers — see `helixel-edit-defop')
 
-(helixel-edit-defop surround-add :display "ms"
+(helixel-edit-defop surround-add
+  :display (lambda (tx)
+             (let ((c (plist-get (helixel-edit-payload tx) :char)))
+               (if c (format "ms[%c]" c) "ms")))
   :runner (lambda (tx)
             (when-let* ((char (plist-get (helixel-edit-payload tx) :char))
                         (pair (helixel--surround-lookup char)))
               (helixel--surround-add (car pair) (cdr pair)))))
 
-(helixel-edit-defop surround-add-tag :display "mt"
+(helixel-edit-defop surround-add-tag
+  :display (lambda (tx)
+             (let ((tag (plist-get (helixel-edit-payload tx) :tag)))
+               (if tag (format "mt[%s]" tag) "mt")))
   :runner (lambda (tx)
             (helixel--surround-add-tag
              (plist-get (helixel-edit-payload tx) :tag))))
@@ -389,7 +400,13 @@ so no region needs to be recreated here.")
             (when-let* ((d (plist-get (helixel-edit-sel tx) :delimiter)))
               (goto-char (helixel--surround-delete-delimiter d)))))
 
-(helixel-edit-defop surround-replace :display "mr"
+(helixel-edit-defop surround-replace
+  :display (lambda (tx)
+             (let* ((p (helixel-edit-payload tx))
+                    (label (or (plist-get p :tag)
+                               (when-let* ((c (plist-get p :new-char)))
+                                 (string c)))))
+               (if label (format "mr[%s]" label) "mr")))
   :runner (lambda (tx)
             (let* ((sel-ctx (helixel-edit-sel tx))
                    (payload (helixel-edit-payload tx))

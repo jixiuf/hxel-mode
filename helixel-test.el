@@ -3056,6 +3056,27 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (helixel-repeat-edit)
     (should (string= (buffer-string) "aZbZc"))))
 
+(ert-deftest helixel-test-edit-display ()
+  "`helixel-edit-display' formats op + sel + payload hints."
+  (should (string= (helixel-edit-display
+                    '(:op kill :sel (:kind line :count 3)))
+                   "d.Lx3"))
+  (should (string= (helixel-edit-display
+                    '(:op kill :sel (:kind line :dir up :count 2)))
+                   "d.L^x2"))
+  (should (string= (helixel-edit-display
+                    '(:op replace-char :sel nil :payload (:char ?Q)))
+                   "R[Q]"))
+  (should (string= (helixel-edit-display
+                    '(:op kill
+                      :sel (:kind textobj :command helixel-mark-inner-word
+                            :count 1)))
+                   "d.inner-word"))
+  (should (string= (helixel-edit-display
+                    '(:op kill :sel (:kind movement
+                                     :moves ((helixel-forward-word-start . 3)))))
+                   "d.v3")))
+
 (ert-deftest helixel-test-repeat-edit-movement-kill ()
   "Test repeat kill with movement selection (v w d style)."
   (helixel-test-with-buffer "hello world foo"
