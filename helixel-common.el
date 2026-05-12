@@ -205,10 +205,23 @@ Accumulates consecutive same-command moves by incrementing count."
   (if (use-region-p)
       (goto-char (region-beginning)))
   (setq helixel--change-track-marker (point-marker))
+  (when (eq helixel-repeat-change-method 'keys)
+    (setq helixel--insert-keys t))
   (helixel--switch-state 'insert))
 
 (helixel-define-command helixel-insert-exit
   (:category state :subcat exit)
+  (when helixel--insert-keys
+    ;; Pop the exit key (escape / C-g / …) so the replay sequence
+    ;; only contains the productive insert-mode keystrokes.
+    ;; `t' is a sentinel meaning "recording but no keys yet".
+    (let ((keys (if (eq helixel--insert-keys t)
+                    (vector)
+                  (pop helixel--insert-keys)
+                  (vconcat (nreverse helixel--insert-keys)))))
+      (setq helixel--last-tx
+            (helixel-edit-with-payload helixel--last-tx :keys keys)))
+    (setq helixel--insert-keys nil))
   (when (and helixel--change-track-marker
              (member (helixel-edit-op helixel--last-tx)
                      '(change insert-text)))
@@ -619,6 +632,8 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
       (helixel--rect-change)
     (helixel--delete-selection)
     (setq helixel--change-track-marker (point-marker))
+    (when (eq helixel-repeat-change-method 'keys)
+      (setq helixel--insert-keys t))
     (helixel--switch-state 'insert)))
 
 (defun helixel-visual-exit ()
@@ -653,18 +668,24 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
     (unless (helixel--end-of-line-p)
       (forward-char)))
   (setq helixel--change-track-marker (point-marker))
+  (when (eq helixel-repeat-change-method 'keys)
+    (setq helixel--insert-keys t))
   (helixel--switch-state 'insert))
 
 (helixel-define-command helixel-insert-beginning-line
   (:category state :subcat insert :edit-op insert-text)
   (beginning-of-line)
   (setq helixel--change-track-marker (point-marker))
+  (when (eq helixel-repeat-change-method 'keys)
+    (setq helixel--insert-keys t))
   (helixel--switch-state 'insert))
 
 (helixel-define-command helixel-insert-after-end-line
   (:category state :subcat insert :edit-op insert-text)
   (end-of-line)
   (setq helixel--change-track-marker (point-marker))
+  (when (eq helixel-repeat-change-method 'keys)
+    (setq helixel--insert-keys t))
   (helixel--switch-state 'insert))
 
 (helixel-define-command helixel-insert-newline
@@ -673,6 +694,8 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
   (end-of-line)
   (newline-and-indent)
   (setq helixel--change-track-marker (point-marker))
+  (when (eq helixel-repeat-change-method 'keys)
+    (setq helixel--insert-keys t))
   (helixel--switch-state 'insert))
 
 (helixel-define-command helixel-insert-prevline
@@ -684,6 +707,8 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
     (call-interactively #'previous-line)
     (indent-according-to-mode))
   (setq helixel--change-track-marker (point-marker))
+  (when (eq helixel-repeat-change-method 'keys)
+    (setq helixel--insert-keys t))
   (helixel--switch-state 'insert))
 
 (defun helixel--replace-region (start end text)
@@ -1155,7 +1180,9 @@ to composed keymaps with mode overrides on top of the base maps."
   (if helixel-insert-state
       (progn
         (setq-local helixel--current-state 'insert)
-        (setq cursor-type 'bar))
+        (setq cursor-type 'bar)
+        (add-hook 'post-command-hook #'helixel--record-insert-key nil t))
+    (remove-hook 'post-command-hook #'helixel--record-insert-key t)
     (setq-local helixel--current-state 'normal)))
 
 ;;;###autoload
@@ -1337,16 +1364,25 @@ via `helixel-select-line-up', default is downward."
 ;; knowledge of specific operators.
 
 (defun helixel--repeat-change-core (tx)
-  "Repeat change: kill selection, insert stored :inserted-text from TX payload."
-  (let ((text (plist-get (helixel-edit-payload tx) :inserted-text)))
+  "Repeat change: kill selection, insert stored text or replay keys.
+Uses `helixel-repeat-change-method': `keys' replays the raw key
+sequence via `helixel--execute-keys' so abbrev/yasnippet/electric-indent
+fire again; `text' (default) inserts the recorded string."
+  (let* ((keys (when (eq helixel-repeat-change-method 'keys)
+                 (helixel--repeat-get-keys tx)))
+         (text (plist-get (helixel-edit-payload tx) :inserted-text)))
     (cond
      ((and (use-region-p) (eq (helixel--selection-type) 'rect))
       (helixel--rect-change)
-      (when text (insert text))
+      (if keys
+          (helixel--execute-keys keys)
+        (when text (insert text)))
       (helixel-insert-exit))
      (t
       (helixel--delete-selection)
-      (when text (insert text))))))
+      (if keys
+          (helixel--execute-keys keys)
+        (when text (insert text)))))))
 
 (helixel-edit-defop kill          :display "d"
   :runner (lambda (_tx) (helixel-kill-thing-at-point)))
@@ -1373,7 +1409,11 @@ via `helixel-select-line-up', default is downward."
   :runner (lambda (_tx) (helixel-indent-right)))
 (helixel-edit-defop insert-text   :display "i"
   :runner (lambda (tx)
-            (insert (or (plist-get (helixel-edit-payload tx) :text) ""))))
+            (let ((keys (when (eq helixel-repeat-change-method 'keys)
+                          (helixel--repeat-get-keys tx))))
+              (if keys
+                  (helixel--execute-keys keys)
+                (insert (or (plist-get (helixel-edit-payload tx) :text) ""))))))
 
 (provide 'helixel-common)
 ;;; helixel-common.el ends here

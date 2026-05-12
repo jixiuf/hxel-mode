@@ -64,9 +64,11 @@ the set of recognised :kind values.")
 ;; ---------------------------------------------------------------------------
 ;; Last Edit Transaction (stored as helixel--last-tx)
 
-(defvar-local helixel--last-tx nil
+(defvar helixel--last-tx nil
   "The most recent edit transaction (see `helixel-edit-make').
-Mirrors `(car helixel--edit-ring)' while both are non-nil.
+Cross-buffer: `.` replays the last edit regardless of which buffer
+it was recorded in.  Is `eq' to `(car helixel--edit-ring)' within
+the recording buffer, but may differ after a buffer switch.
 May be re-pointed by `helixel-repeat-edit-pick' to replay an older entry.")
 
 (defcustom helixel-edit-ring-max 64
@@ -92,6 +94,30 @@ Trims to `helixel-edit-ring-max'."
                  (> (length helixel--edit-ring) helixel-edit-ring-max))
         (setcdr (nthcdr (1- helixel-edit-ring-max) helixel--edit-ring)
                 nil)))))
+
+(defcustom helixel-repeat-change-method 'text
+  "How `.` replays change/insert operations.
+`text' replays the stored text string (default, fast).
+`keys' replays the raw key sequence so abbrev, yasnippet,
+and electric-indent fire again during repeat."
+  :type '(choice (const text) (const keys))
+  :group 'helixel)
+
+(defvar-local helixel--insert-keys nil
+  "List of key-vectors recorded during the current insert session.
+Each element is a vector as returned by `this-command-keys-vector'.
+Built up by `helixel--record-insert-key' (post-command-hook in
+insert state).  Consumed by `helixel-insert-exit' to populate the
+:keys payload field.")
+
+(defun helixel--record-insert-key ()
+  "Post-command-hook: push `this-command-keys-vector' onto `helixel--insert-keys'.
+No-op when `helixel--insert-keys' is nil (not recording).
+The first call converts the sentinel t into a real list."
+  (when helixel--insert-keys
+    (if (eq helixel--insert-keys t)
+        (setq helixel--insert-keys (list (this-command-keys-vector)))
+      (push (this-command-keys-vector) helixel--insert-keys))))
 
 (defvar-local helixel--change-track-marker nil
   "Marker at position before entering insert during a change/insert operation.
@@ -133,6 +159,29 @@ The `helixel-define-command' macro handles this automatically."
 Thin wrapper around `helixel-sel-recreate' — dispatches on (:kind ...)."
   (when sel-ctx
     (helixel-sel-recreate (plist-get sel-ctx :kind) sel-ctx)))
+
+;; ---------------------------------------------------------------------------
+;; Insert-keys accessor (consumed by helixel-common.el's op runners)
+
+(defsubst helixel--repeat-get-keys (tx)
+  "Return the :keys key-sequence vector from TX payload, or nil."
+  (plist-get (helixel-edit-payload tx) :keys))
+
+(defun helixel--execute-keys (keys)
+  "Execute KEYS (a key-sequence vector) in an insert-mode context.
+Handles self-inserting characters and common editing keys (return,
+backspace).  Works around an Emacs 32 `execute-kbd-macro' batch-mode
+bug.  Abbrev, yasnippet, and electric-indent fire because we go
+through `call-interactively'."
+  (let ((helixel--inhibit-repeat-record t)
+        (helixel--inhibit-action-track t))
+    (dolist (key (append keys nil))
+      (setq last-command-event key)
+      (let ((cmd (key-binding (vector key) t)))
+        (if (and cmd (not (eq cmd 'undefined)))
+            (call-interactively cmd)
+          (setq last-command-event key)
+          (call-interactively #'self-insert-command))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Execution dispatcher — single entry point for replay

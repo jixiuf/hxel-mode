@@ -3157,6 +3157,116 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (setq helixel--change-track-marker nil)))
 
 ;; ============================================================================
+;; Cross-buffer repeat tests (Item 5)
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-cross-buffer ()
+  "`. replays the last edit across buffers when `helixel--last-tx' is global."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 7)
+    (kill-word 1)
+    (setq last-command nil this-command 'helixel-yank)
+    (helixel-yank)
+    (should (string= (buffer-string) "hello world"))
+    (let ((cross-tx helixel--last-tx))
+      (with-temp-buffer
+        (insert "foo bar")
+        (goto-char 8)                   ; end of buffer, after "bar"
+        (setq helixel--last-tx cross-tx)
+        (helixel-repeat-edit)
+        ;; "p" pastes the killed word "world" after "bar"
+        (should (string= (buffer-string) "foo barworld"))))))
+
+(ert-deftest helixel-test-repeat-cross-buffer-change ()
+  "Cross-buffer `.` replays a change+insert operation from another buffer."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word
+          this-command 'helixel-change-thing-at-point)
+    (helixel-change-thing-at-point)
+    (insert "X")
+    (helixel-insert-exit)
+    (should (string= (buffer-string) "X world"))
+    (let ((cross-tx helixel--last-tx))
+      (with-temp-buffer
+        (insert "abc def")
+        (goto-char 1)
+        (setq helixel--last-tx cross-tx)
+        (helixel-repeat-edit)
+        (should (string= (buffer-string) "X def"))))))
+
+;; ============================================================================
+;; Keys-mode change replay tests (Item 4)
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-change-keys-mode ()
+  "`helixel-repeat-change-method' = `keys' replays raw key sequence."
+  (helixel-test-with-buffer "hello world"
+    (let ((helixel-repeat-change-method 'keys))
+      (goto-char 1)
+      ;; Directly construct a tx with :keys payload, simulating
+      ;; what c X Y <esc> would record.  The keys are only the
+      ;; productive insert-mode keystrokes (X Y), not the initiating c.
+      (setq helixel--last-tx
+            `(:op change
+              :sel (:kind textobj :command helixel-mark-inner-word :count 1)
+              :payload (:inserted-text "XY" :keys ,(kbd "XY"))))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "XY world"))
+      ;; Replay in keys mode on another word
+      (goto-char 4)
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "XY XY")))))
+
+(ert-deftest helixel-test-repeat-insert-keys-mode ()
+  "`helixel-repeat-change-method' = `keys' replays insert key sequence."
+  (helixel-test-with-buffer "abc"
+    (let ((helixel-repeat-change-method 'keys))
+      (goto-char 2)
+      ;; Directly construct a tx with :keys payload (simulating i Z <esc>)
+      (setq helixel--last-tx
+            `(:op insert-text
+              :sel nil
+              :payload (:text "Z" :keys ,(kbd "Z"))))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "aZbc"))
+      (should (helixel--repeat-get-keys helixel--last-tx))
+      (goto-char 4)
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "aZbZc")))))
+
+(ert-deftest helixel-test-repeat-keys-fallback-to-text ()
+  "When :keys is absent from payload, keys-mode falls back to :text."
+  (helixel-test-with-buffer "hello"
+    (let ((helixel-repeat-change-method 'keys))
+      (goto-char 1)
+      ;; Manually construct a tx without :keys (old-format tx)
+      (setq helixel--last-tx
+            '(:op insert-text :sel nil :payload (:text "OLD")))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "OLDhello")))))
+
+(ert-deftest helixel-test-repeat-change-keys-disabled ()
+  "`helixel-repeat-change-method' = `text' never uses `execute-kbd-macro'."
+  (helixel-test-with-buffer "hello world"
+    (let ((helixel-repeat-change-method 'text))
+      (goto-char 1)
+      ;; A tx with both :inserted-text and :keys - text mode uses :inserted-text
+      (setq helixel--last-tx
+            `(:op change
+              :sel (:kind textobj :command helixel-mark-inner-word :count 1)
+              :payload (:inserted-text "XY" :keys ,(kbd "ZZ"))))
+      (helixel-repeat-edit)
+      ;; text mode uses :inserted-text, not :keys
+      (should (string= (buffer-string) "XY world"))
+      (should (plist-get (helixel-edit-payload helixel--last-tx) :inserted-text))
+      (goto-char 4)
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "XY XY")))))
+
+;; ============================================================================
 ;; Surround tests
 ;; ============================================================================
 
