@@ -44,7 +44,9 @@
 (declare-function helixel-surround-replace "helixel-surround")
 
 
-(defcustom helixel-major-mode-default-states '((calc-mode . insert))
+(defcustom helixel-major-mode-default-states
+  '((calc-mode . insert)
+    (Custom-mode . normal))
   "Alist mapping major modes to default Helixel states.
 Each element should be a cons cell (MAJOR-MODE . STATE), where
 MAJOR-MODE is a symbol like `dired-mode', and STATE is one of
