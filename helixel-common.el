@@ -959,6 +959,7 @@ Example with multiple callbacks:
     (define-key keymap (kbd "C-i") #'helixel-jump-forward)
     (define-key keymap (kbd "C-f") #'helixel-scroll-up-command)
     (define-key keymap (kbd "C-b") #'helixel-scroll-down-command)
+
     (define-key keymap (kbd "1") (kbd "C-u 1"))
     (define-key keymap (kbd "2") (kbd "C-u 2"))
     (define-key keymap (kbd "3") (kbd "C-u 3"))
@@ -969,6 +970,8 @@ Example with multiple callbacks:
     (define-key keymap (kbd "8") (kbd "C-u 8"))
     (define-key keymap (kbd "9") (kbd "C-u 9"))
     (define-key keymap (kbd "0") (kbd "C-u 0"))
+    (define-key keymap (kbd "-") (kbd "C-u -"))
+    (define-key keymap (kbd "=") #'indent-for-tab-command)
 
     (define-key keymap "w" #'helixel-forward-word-start)
     (define-key keymap "W" #'helixel-forward-WORD-start)
