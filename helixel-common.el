@@ -905,17 +905,22 @@ Example with multiple callbacks:
 \(helixel-define-ex-command \"build\" \\='(save-buffer compile))"
   (add-to-list 'helixel--command-alist
                (cons (if (listp command) command (list command))
-                     (if (listp callback) callback (list callback)))))
+                     (if (and (listp callback) (not (functionp callback)))
+                         callback
+                       (list callback)))))
 
 (defun helixel-execute-command (input)
   "Look for INPUT in `helixel--command-alist' and execute it, if present."
   (interactive "s:")
   (let ((command (string-trim input)))
     (if-let* ((callbacks
-               (alist-get command helixel--command-alist nil nil
-                          (lambda (a b) (member b a)))))
+               (catch 'found
+                 (dolist (entry helixel--command-alist)
+                   (let ((names (car entry)))
+                     (when (member command names)
+                       (throw 'found (cdr entry))))))))
         (dolist (cb callbacks)
-          (if (commandp cb)
+          (if (and (symbolp cb) (commandp cb))
               (progn
                 (call-interactively cb)
                 (setq this-command cb))
