@@ -9,6 +9,7 @@ INIT_PACKAGES="(progn \
   (require 'package) \
   (push '(\"melpa\" . \"https://melpa.org/packages/\") package-archives) \
   (package-initialize) \
+  (push (expand-file-name \".\") load-path) \
   (dolist (pkg '(${DEPS})) \
     (unless (package-installed-p pkg) \
       (unless (assoc pkg package-archive-contents) \
@@ -39,7 +40,7 @@ test:
 	@${EMACS_BATCH} \
 		$(addprefix -l ,$(FILES)) \
 		-l helixel-test.el \
-		--eval "(ert-run-tests-batch-and-exit '${TEST_SELECTOR})" \
+		--eval "(progn (setq load-prefer-newer t) (ert-run-tests-batch-and-exit '${TEST_SELECTOR}))" \
 		&& echo "OK"
 
 checkdoc:
@@ -82,6 +83,35 @@ column-check:
 	done && echo "OK"
 
 
-lint: compile checkdoc package-lint column-check
+lint: compile checkdoc package-lint column-check ctx-lint
 
-.PHONY:	all compile clean-elc test lint checkdoc
+# ----------------------------------------------------------------------
+# ctx-lint: forbid raw plist-get on sel/ctx — must use helixel-sel-* accessors.
+# Only helixel-edit.el (accessor implementations) is exempt.
+# ----------------------------------------------------------------------
+# ctx-unique keys — any plist-get on these outside helixel-edit.el is forbidden
+CTX_UNIQUE = :kind :cursor-offset :moves :command
+# suspicious keys — flag for manual review (may be used in other plists)
+CTX_SUSPECT = :dir :count :pattern :offset
+
+ctx-lint:
+	@echo "---- ctx-lint: raw plist-get on sel/ctx"
+	@err=0; \
+	for file in $(FILES); do \
+	  case "$$file" in helixel-edit.el) continue ;; esac; \
+	  for key in $(CTX_UNIQUE); do \
+	    if grep -qn "plist-get.*$$key" "$$file" 2>/dev/null; then \
+	      echo "$$file: FATAL — raw plist-get with ctx-unique key $$key:"; \
+	      grep -n "plist-get.*$$key" "$$file"; \
+	      err=1; \
+	    fi; \
+	  done; \
+	  for key in $(CTX_SUSPECT); do \
+	    matches=$$(grep -n "plist-get.*$$key" "$$file" 2>/dev/null) || true; \
+	    if [ -n "$$matches" ]; then \
+	      echo "$$file: REVIEW — plist-get with key $$key (verify it is not ctx):"; \
+	      echo "$$matches"; \
+	    fi; \
+	  done; \
+	done; \
+	exit $$err

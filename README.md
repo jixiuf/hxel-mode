@@ -35,7 +35,7 @@ Requires Emacs >= 29.1.
 | `C-o` `C-i` | Jump to older / newer position (global, cross-buffer) |
 | `M-.` | Repeat last find-char |
 | `n` `N` | Repeat / reverse direction repeat (`C-u n` pick from history) |
-| `.` | Repeat last edit (kill, change, paste, insert, ...).  Numeric prefix replays N times.  `M-x helixel-repeat-edit-pick` chooses an older edit from the per-buffer ring (`M-x helixel-repeat-debug` to inspect). |
+| `.` | Repeat last edit.  Prefixes: `3.` = 3 times in stored direction; `0.` = all remaining matches in stored direction; `C-u - 3 .` = 3 times in opposite direction; `C-u .` = all matches in entire buffer.  Non-search selections fall back to single execution for 0/C-u.  `M-x helixel-repeat-edit-pick` chooses from the per-buffer ring. |
 | `i` `a` `I` `A` `o` `O` | Enter insert mode |
 | `v` | Enter visual mode |
 | `d` `c` `y` `r` `R` | Edit: delete, change, copy, replace, replace-char |
@@ -194,6 +194,67 @@ N           reverse direction, find previous "b"
 n           continue backward
 
 C-u n       pick a past search/find-char from history
+```
+
+### Dot-Repeat (`.`) Prefixes
+
+After a search-initiated edit (e.g. `/hello<RET> cXXX<ESC>`),
+`.` supports extended prefixes:
+
+| Prefix | Behavior |
+|--------|----------|
+| `.` | Repeat once in stored direction |
+| `3.` | Repeat 3 times in stored direction |
+| `0.` | Repeat all remaining matches in stored direction |
+| `C-u .` | Repeat all matches in entire buffer (point-min → forward) |
+| `C-u - 3 .` | Repeat 3 times in opposite direction |
+
+- `0.` stops silently when no more matches are found in the stored direction.
+- `C-u .` starts from `point-min` and processes every match forward,
+  regardless of the original search direction.
+- `C-u - N .` temporarily reverses the stored direction; subsequent
+  `.` still uses the original direction.
+- Non-search selections (textobj/line/rect) with `0.` or `C-u .`
+  fall back to a single execution.
+
+#### Examples
+
+Search-based repeat (advances to next match):
+```
+/hello<RET>   search "hello"
+cWORLD<ESC>   change to "WORLD"
+.             change next "hello" → "WORLD"
+.             change next "hello" → "WORLD"
+3.            change next 3 "hello"s → "WORLD"
+```
+
+Line-based repeat (`.` auto-advances to next line):
+```
+x             select line
+>             indent right
+.             indent next line (auto-advance)
+.             indent next line again
+3.            indent next 3 lines
+
+x             select line
+ihello<ESC>   insert "hello" at bol
+.             insert "hello" on next line (auto-advance)
+.             insert "hello" on next line
+```
+
+Line kill (no auto-advance — deletion already moved point):
+```
+x             select line
+d             kill line (point moves to next line's bol)
+.             kill next line (already at point)
+.             kill next line
+```
+
+Prefixes:
+```
+0.            repeat all remaining matches/lines in stored direction
+C-u .         repeat all matches, entire buffer (point-min → forward)
+C-u - 3 .     repeat 3 times in opposite direction
 ```
 
 ### Session Mark (`;`)

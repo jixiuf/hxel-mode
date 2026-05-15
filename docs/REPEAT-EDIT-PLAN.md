@@ -65,6 +65,11 @@ Extension points (zero kernel edits required):
 | 17 | Pluggable display: `:display` may be a function; new `helixel-sel-display` cl-defgeneric; per-kind/per-op rich labels (e.g. `R[Q]`, `d.inner-word`, `c.Lx3`, `mr[)]`). | edit, repeat, common, textobj, surround |
 | 17b | Edit ring (`helixel--edit-ring`, `helixel-edit-ring-max=64`, head dedup) + `helixel-repeat-edit-pick` completing-read picker. | repeat |
 | 18 | Housekeeping: `helixel--inhibit-action-track` moves to its rightful home (`helixel-action.el`); commentary refreshed; `helixel-repeat-debug` for inspection; checkdoc clean. | action, common, repeat, edit, surround, textobj |
+| 19 | **P0.1 ring-head sync**: `helixel-insert-exit` now syncs `helixel--edit-ring` head so `helixel-repeat-edit-pick` replays full payload.  Added 2 end-to-end pick tests. | common, test |
+| 20 | **P0.2 undo amalgamation**: `.` replay wrapped in `undo-amalgamate-change-group` — all iterations are a single undo step.  Added undo test. | repeat, test |
+| 21 | **P1.1 track-visual-move guarded during replay**: `helixel--track-visual-move` no-ops when `helixel--inhibit-repeat-record` is t.  Also fixed `helixel-define-command` to only inject `track-visual-move` for `:category movement` commands (edit commands like kill/change were polluting `helixel--repeat-sel-ctx` after their own `record-edit` consumed it). | common, test |
+| 22 | **P1.2 rect-change replay**: `helixel--repeat-change-core` calls `helixel--rect-replay` directly instead of the full `helixel-insert-exit` (avoids unnecessary state switching during `.` replay).  Added state-invariance test. | common, test |
+| 23 | **Lint**: Fixed all checkdoc warnings (22 across `helixel-action.el`, `helixel-common.el`), added missing docstrings, fixed column-width violations. All files: checkdoc + compile + package-lint clean, ≤80 cols. | action, common, repeat |
 
 ## Future Work
 
@@ -188,3 +193,51 @@ helixel--live-edit-set(tx)         (action ring — ; jumping consumer)
 - **Undo repeat**: `.` after `u`/`U` — debatable value
 - **Cross-buffer repeat**: last-tx is buffer-local
 - `helixel-insert-after` records `insert-text`
+
+---
+
+## Phase 24 — Search-aware `.` repeat
+
+**Date**: 2026-05-14
+**Files**: `helixel-common.el`, `helixel-search.el`, `helixel-repeat.el`,
+`helixel-edit.el`, `helixel-test.el`
+
+- Unified search-edit design: `search` sel with `:entry-kind` and
+  `:cursor-offset` replaces separate `insert-selection-*` kinds
+- `.` after search + insert/append finds the NEXT match automatically
+- Uses `isearch-search-string` for consistent isearch behavior
+- `looking-at` guard skips current match for insert ops (chained `.`)
+- Error handling: "Search pattern not found" when no more matches
+- Removed `helixel-search-activate-mark` — mark always active after search
+- Added 8 end-to-end tests for search + `.` scenarios
+
+## Phase 25 — Movement selection `.` e2e tests + kmacro guards
+
+**Date**: 2026-05-14
+**Files**: `helixel-repeat.el`, `helixel-test.el`, `AGENTS.md`
+
+- Added 3 end-to-end tests for movement + `.`:
+  `vw d .` at start, `.` at different word start, `v w w d .`
+- Added kmacro guards: `helixel--record-edit` inhibited during
+  `executing-kbd-macro`; `helixel-repeat-edit` shows descriptive error
+  during kmacro playback if no edit is stored
+- Updated `AGENTS.md` with pitfalls #20 (stale .elc), #21 (kmacro),
+  #22 (movement `.` design)
+- 391 tests passing, lint clean
+
+## Phase 26 — , comma repeat-selection audit + e2e tests
+
+**Date**: 2026-05-14
+**Files**: `helixel-test.el`, `AGENTS.md`
+
+- Audited `,` flow for all 7 selection kinds: `helixel-repeat-selection`
+  → `helixel--recreate-selection` → kind-specific recreate (search,
+  movement, textobj, line, rect, surround, insert-*). All kinds set
+  `helixel--repeat-has-preview` correctly so `.` uses the region.
+- Added 3 end-to-end `,` tests: line kill preview, line count override,
+  movement preview (vw d preview). Total 10 `,` tests pass.
+- Design finding: `,` with count override works for line/rect/textobj
+  but not for movement/search (count isn't meaningful for those).
+- `:bounds` enrichment (from Phase 25 #22) would make `,` more
+  predictable when buffer has changed — recorded bounds could be
+  shown alongside the replayed selection.
