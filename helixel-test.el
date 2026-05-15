@@ -3601,6 +3601,59 @@ insert-mode bindings differ from normal-mode."
     (helixel--execute-keys (kbd "XX"))
     (should (string= (buffer-string) "XXhello"))))
 
+(ert-deftest helixel-test-execute-keys-backspace ()
+  "`helixel--execute-keys' replays DEL via command-based path.
+Command-based replay calls backward-delete-char-untabify directly."
+  (helixel-test-with-buffer "hello"
+    (goto-char 6)
+    ;; Replay: insert A, insert B, DEL (deletes B) → "helloA"
+    ;; Keys must match command count; non-self-insert keys are ignored.
+    (helixel--execute-keys (kbd "ABx")
+                           '(self-insert-command
+                             self-insert-command
+                             backward-delete-char-untabify))
+    (should (string= (buffer-string) "helloA"))))
+
+(ert-deftest helixel-test-execute-keys-control-d ()
+  "`helixel--execute-keys' replays C-d via command-based path.
+C-d (delete-char) is called via call-interactively, not insert-char."
+  (helixel-test-with-buffer "hello"
+    (goto-char 1)
+    (helixel--execute-keys (kbd "C-d") '(delete-char))
+    (should (string= (buffer-string) "ello"))))
+
+(ert-deftest helixel-test-execute-keys-mixed-backspace ()
+  "`helixel--execute-keys' replays mixed insert + DEL + insert.
+Simulates typing 'bao' then DEL (deletes 'o') then 'r'."
+  (helixel-test-with-buffer "hello"
+    (goto-char 6)
+    ;; Replay: insert b,a,o, DEL deletes o, insert r → "hellobar"
+    (helixel--execute-keys (kbd "baoxr")
+                           '(self-insert-command     ; b
+                             self-insert-command     ; a
+                             self-insert-command     ; o
+                             backward-delete-char-untabify ; DEL
+                             self-insert-command))   ; r
+    (should (string= (buffer-string) "hellobar"))))
+
+(ert-deftest helixel-test-execute-keys-symbol-no-crash ()
+  "`helixel--execute-keys' handles symbol keys without crashing.
+Unbound symbols (like backspace on some Emacs) go through
+execute-kbd-macro — may beep but must not raise wrong-type-argument.
+Also verifies the characterp guard in helixel--insert-finish."
+  (helixel-test-with-buffer "hello"
+    (goto-char 1)
+    ;; The key-based fallback must not crash on symbols.
+    ;; execute-kbd-macro may error on unbound keys — that's OK.
+    ;; The old bug (= 'backspace ?\e) must NOT happen.
+    (condition-case err
+        (helixel--execute-keys [backspace])
+      (wrong-type-argument
+       (ert-fail
+        (format "crashed with wrong-type-argument: %S" err)))
+      (error nil))  ;; other errors (unbound key) are OK
+    (should t)))
+
 ;; ============================================================================
 ;; Cross-buffer repeat tests (Item 5)
 ;; ============================================================================
@@ -5647,8 +5700,6 @@ entry-kind=insert means insert at match-beginning, not match-end."
   (let ((helixel-repeat-change-method 'text))
     (helixel-test-with-buffer "line1\nline2\nline3\n"
       (goto-char 1)
-      ;; Simulate v j d (select 2 lines, kill)
-      ;; The kill runner will delete the selected lines.
       (setq helixel--last-tx
             (helixel-edit-make 'kill
               (helixel-sel-create 'line
@@ -5725,6 +5776,105 @@ entry-kind=insert means insert at match-beginning, not match-end."
       ;; 0. backward from start -> no more matches
       (helixel-repeat-edit 0)
       (should (string= (buffer-string) "XXX A hello B hello C")))))
+
+;; === All-buffer reverse (C-u - .) ===
+
+(ert-deftest helixel-test-repeat-all-buffer-reverse-search-insert ()
+  "C-u - . after /search iXXX<ESC> inserts BEFORE all matches backward."
+  (helixel-test-with-buffer "hello A hello B hello C"
+    (goto-char 1)
+    (re-search-forward "hello")
+    (let ((isearch-success t)
+          (isearch-string "hello")
+          (isearch-regexp t)
+          (isearch-forward t)
+          (isearch-other-end (match-beginning 0)))
+      (helixel-search--handle-done nil))
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'search
+             '(:pattern "hello" :dir forward :entry-kind insert)
+             #'helixel--recreate-search "/hello/")
+            :text "XXX"))
+    (goto-char (match-beginning 0))
+    (insert "XXX")
+    (should (string= (buffer-string) "XXXhello A hello B hello C"))
+    ;; C-u - . -> insert before ALL matches from point-max backward
+    (helixel-repeat-edit '(-4))
+    (should (string= (buffer-string)
+                     "XXXhello A XXXhello B XXXhello C"))))
+
+(ert-deftest helixel-test-repeat-all-buffer-reverse-line ()
+  "C-u - . after x> indents ALL lines from bottom up."
+  (helixel-test-with-buffer "a\nb\nc\nd\n"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line
+          this-command 'helixel-indent-right)
+    (helixel-indent-right)
+    (should (string= (buffer-string) " a\nb\nc\nd\n"))
+    ;; C-u - . from recorded marker: backward skip-current (nothing
+    ;; above), then forward skip-current (lines b,c,d get indented).
+    ;; The recorded line (a) is skipped → stays with 1 indent.
+    (helixel-repeat-edit '(-4))
+    (should (string= (buffer-string) " a\n b\n c\n d\n"))))
+
+(ert-deftest helixel-test-repeat-reverse-line-n-times ()
+  "C-u -2 . after x> (from line 2) indents the 2 lines above."
+  (helixel-test-with-buffer "a\nb\nc\nd\n"
+    (goto-char 4) ; line 2
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line
+          this-command 'helixel-indent-right)
+    (helixel-indent-right)
+    (should (string= (buffer-string) "a\n b\nc\nd\n"))
+    ;; Reverse 2: skip line 2, indent line 1
+    (helixel-repeat-edit -2)
+    (should (string= (buffer-string) " a\n b\nc\nd\n"))))
+
+(ert-deftest helixel-test-repeat-all-buffer-line-change ()
+  "C-u . after xc<text><ESC> changes ALL lines from point-min.
+Verifies nil-advance ops (change,kill) don't loop forever."
+  (helixel-test-with-buffer "hello\nhello\nhello\nxibar\n"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'line '(:dir forward :count 1)
+                                #'helixel--recreate-line "L")
+            ;; The change replaces the whole line (incl. \n) so the
+            ;; replacement text must include the trailing newline.
+            :inserted-text "bar\n"))
+    ;; First . changes line 1
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "bar\nhello\nhello\nxibar\n"))
+    ;; C-u . -> change ALL lines from point-min
+    (helixel-repeat-edit '(4))
+    (should (string= (buffer-string) "bar\nbar\nbar\nbar\n"))))
+
+(ert-deftest helixel-test-repeat-all-buffer-line-kill ()
+  "C-u . after xd kills remaining lines from recorded position.
+After kill, the marker points to the next surviving line;
+C-u . processes forward + backward, skipping the recorded line.
+Note: C-u . AFTER a kill skips the new current line because
+kill naturally moved point — use a single xd prefix for bulk kill."
+  (helixel-test-with-buffer "line1\nline2\nline3\nline4\n"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make 'kill
+            (helixel-sel-create 'line '(:dir forward :count 1)
+                                #'helixel--recreate-line "L")))
+    ;; First . kills line 1; cursor at BOL of line 2
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "line2\nline3\nline4\n"))
+    ;; C-u . from recorded position: forward skips line 2
+    ;; (marker now pointing there), kills lines 3 and 4;
+    ;; backward from marker: skip-current hits bobp, exits.
+    ;; Line 2 survives.
+    (helixel-repeat-edit '(4))
+    (should (string= (buffer-string) "line2\n"))))
 
 ;;; Line selection auto-advance for `.` repeat
 

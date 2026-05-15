@@ -329,3 +329,17 @@ receives both keys and commands:
 This solves the normal-vs-insert mode keymap mismatch: commands like
 `backward-char' and `forward-word' work correctly regardless of which
 mode `.` is pressed in.
+
+### 32. `helixel-repeat-advance-alist` — per-kind advance for `.`
+**Design**: A `defcustom` alist mapping selection kind → advance fn.
+Each fn takes (TX ADVANCE-TAG) and positions point at the next target.
+Return nil to stop iteration.  The operator's `:repeat-advance` tag
+gates whether advance happens at all.
+
+Currently registered: `line`, `rect` → forward-line.
+Search is intentionally omitted — `helixel--recreate-search' handles
+its own skip+find logic.
+
+Third-party kinds extend by adding to the alist:
+  (add-to-list 'helixel-repeat-advance-alist
+               '(my-kind . my-advance-fn))
