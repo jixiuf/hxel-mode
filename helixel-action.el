@@ -81,7 +81,8 @@ for cancel sentinels).  They remain in the ring for dedup purposes."
   '(movement textobj search find-char edit goto user jump)
   "Action :category symbols that are recorded into `helixel--jump-list'.
 Categories not listed here do not generate jump entries.
-See also `helixel-jump-cycle-categories' for controlling C-o/C-i visibility."
+See also `helixel-jump-cycle-categories' for controlling
+`helixel-jump-backward' / `helixel-jump-forward' visibility."
   :type '(repeat (choice
                   (const :tag "Movement" movement)
                   (const :tag "Text object" textobj)
@@ -95,8 +96,9 @@ See also `helixel-jump-cycle-categories' for controlling C-o/C-i visibility."
 
 (defcustom helixel-jump-cycle-categories
   '(movement textobj search find-char edit goto user jump)
-  "Action :category symbols visible during C-o/C-i cycling.
-Only categories listed here are shown when pressing C-o or C-i.
+  "Action :category symbols visible during jump cycling.
+Only categories listed here are shown when pressing
+`helixel-jump-backward' or `helixel-jump-forward'.
 Entries from other categories remain in `helixel--jump-list' but are skipped.
 This can be narrower than `helixel-jump-categories' to record everything
 while only navigating a subset."
@@ -154,16 +156,18 @@ Capped at `helixel-action-ring-max'.")
 ;; ── Global jump list ──
 
 (defvar helixel--jump-list nil
-  "Global jump list for C-o / C-i navigation.  Most recent first.
+  "Global jump list for `helixel-jump-backward' / `helixel-jump-forward'.
+Most recent first.
 Each entry: (:marker MARKER :buffer BUFFER :category CAT :subcat SUBCAT)")
 
 (defvar helixel--jump-pos nil
-  "Current position in `helixel--jump-list' for C-o/C-i cycling.
+  "Current position in `helixel--jump-list' for jump cycling.
 nil = not cycling.  0 = newest (list head).  N = older.")
 
 (defvar helixel-jump-cleanup-function nil
-  "Function called after a successful C-o/C-i jump to clean up selection state.
-Set by helixel-common.el.  Takes no arguments.  Typically `helixel--clear-data'.")
+  "Function called after a successful jump to clean up selection state.
+Set by helixel-common.el.  Takes no arguments.
+Typically `helixel--clear-data'.")
 
 (defvar helixel-action-push-functions nil
   "Abnormal hook run after an action is pushed to `helixel--action-ring'.
@@ -212,12 +216,14 @@ The sub-plist is keyed by the keyword form of :category'."
 
 (defun helixel--live-cat-set-dir (dir)
   "Set direction to DIR in the live action's category sub-plist.
-:dir is the only field shared across search, find-char, and movement."
-  (let ((cat (plist-get helixel--action :category)))
-    (when cat
-      (let* ((kwd (intern (format ":%s" cat)))
-             (sub (plist-get helixel--action kwd)))
-        (plist-put helixel--action kwd (plist-put sub :dir dir))))))
+:dir is the only field shared across search, find-char, and movement.
+No-op when `helixel--inhibit-action-track' is non-nil."
+  (unless helixel--inhibit-action-track
+    (let ((cat (plist-get helixel--action :category)))
+      (when cat
+        (let* ((kwd (intern (format ":%s" cat)))
+               (sub (plist-get helixel--action kwd)))
+          (plist-put helixel--action kwd (plist-put sub :dir dir)))))))
 
 (defsubst helixel--action-cat-get (action key)
   "Read KEY from ACTION's category sub-plist."
@@ -316,7 +322,8 @@ of the action-ring entry."
             (dolist (e tail)
               (let ((em (plist-get e :marker)))
                 (when (markerp em) (set-marker em nil)))))
-          (setcdr (nthcdr (1- helixel-jump-list-max) helixel--jump-list) nil))))))
+          (setcdr (nthcdr (1- helixel-jump-list-max)
+                          helixel--jump-list) nil))))))
 
 (defun helixel--jump-same-content-p (a b)
   "Return non-nil if jump entries A and B have identical content.
@@ -442,7 +449,8 @@ killed buffers) are silently ignored."
 
 (defun helixel--grouped-ring-group-start (list pos same-group-pred)
   "Return the oldest (largest) index in LIST of the group containing POS.
-Consecutive entries where FUNCALL SAMEGROUP-PRED returns non-nil form a group."
+Consecutive entries where `same-group-pred' returns non-nil form a group.
+SAME-GROUP-PRED is called with two successive entries."
   (let ((len (length list)))
     (while (and (< (1+ pos) len)
                 (funcall same-group-pred (nth pos list) (nth (1+ pos) list)))
@@ -450,7 +458,9 @@ Consecutive entries where FUNCALL SAMEGROUP-PRED returns non-nil form a group."
     pos))
 
 (defun helixel--grouped-ring-group-newest (list pos same-group-pred)
-  "Return the newest (smallest) index in LIST of the group containing POS."
+  "Return the newest (smallest) index in LIST of the group containing POS.
+SAME-GROUP-PRED is called with two adjacent entries to test group
+membership."
   (let ((i pos))
     (while (and (> i 0)
                 (funcall same-group-pred (nth i list) (nth (1- i) list)))
@@ -458,19 +468,23 @@ Consecutive entries where FUNCALL SAMEGROUP-PRED returns non-nil form a group."
     i))
 
 (defun helixel--grouped-ring-visible-index (list pos visible-pred)
-  "Return index of first visible entry starting at POS in LIST, or nil."
+  "Return index of first visible entry starting at POS in LIST, or nil.
+VISIBLE-PRED is called with each entry; the first one returning
+non-nil is selected."
   (cl-loop for i from pos below (length list)
            when (funcall visible-pred (nth i list))
            return i))
 
 (defun helixel--grouped-ring-visible-count (list visible-pred)
-  "Count visible entries in LIST."
+  "Count visible entries in LIST.
+VISIBLE-PRED is called with each entry in LIST."
   (cl-loop for a in list
            when (funcall visible-pred a)
            count 1))
 
 (defun helixel--grouped-ring-find (list pos direction visible-pred)
-  "Find index of next visible entry from POS in DIRECTION.
+  "Find index of next visible entry in LIST from POS in DIRECTION.
+LIST is searched for entries where VISIBLE-PRED returns non-nil.
 DIRECTION: +1 = older (toward end), -1 = newer (toward 0).
 Returns the index or nil."
   (let ((len (length list)))
@@ -511,9 +525,15 @@ Same group = same :category and same :subcat."
        (eq (helixel--action-get a :subcat) (helixel--action-get b :subcat))))
 
 (defun helixel-action--cycle-group-start (pos ring)
+  "Return the group-start index in RING for the group containing POS.
+Delegates to `helixel--grouped-ring-group-start' with
+`helixel-action--same-group-p' as the same-group predicate."
   (helixel--grouped-ring-group-start ring pos #'helixel-action--same-group-p))
 
 (defun helixel-action--cycle-group-newest (pos ring)
+  "Return the newest index in RING for the group containing POS.
+Delegates to `helixel--grouped-ring-group-newest' with
+`helixel-action--same-group-p' as the same-group predicate."
   (helixel--grouped-ring-group-newest ring pos #'helixel-action--same-group-p))
 
 (defun helixel-action--cycle-commit ()
@@ -529,6 +549,9 @@ Frees marker for invalid actions.  Returns t if pushed."
       (setq helixel--action nil))))
 
 ;; ── Session cycling (`;') ──
+;;
+;; Bound to `;' in helixel-normal-map.  Jump targets are
+;; reached via `helixel--jump-to-marker'.
 
 (defun helixel-action-cycle (&optional arg)
   "Cycle through visible entries in `helixel--action-ring'.
@@ -606,7 +629,8 @@ same-type command won't be dedup'd against the previous session."
 (defun helixel-register-jump (&optional category subcat)
   "Register current point as a jump position in `helixel--jump-list'.
 CATEGORY defaults to 'user, SUBCAT defaults to 'jump.
-Call this from any command to make its start position reachable via C-o/C-i."
+Call this from any command to make its start position reachable via
+`helixel-jump-backward' / `helixel-jump-forward'."
   (let ((cat (or category 'user))
         (sub (or subcat 'jump)))
     (let ((action `(:category ,cat
@@ -630,7 +654,7 @@ The advice is named `helixel-jump--before' on SYMBOL."
 ;; ── Jump display helpers ──
 
 (defun helixel--jump-display (action)
-  "Format jump entry ACTION for display during C-o/C-i cycling."
+  "Format jump entry ACTION for display during jump cycling."
   (let ((cat (plist-get action :category))
         (sub (plist-get action :subcat))
         (buf (plist-get action :buffer)))
@@ -644,7 +668,7 @@ The advice is named `helixel-jump--before' on SYMBOL."
 ;; ── Jump cycle predicates ──
 
 (defun helixel--jump-visible-p (action)
-  "Return non-nil if ACTION is visible during C-o/C-i cycling."
+  "Return non-nil if ACTION is visible during jump cycling."
   (and (memq (plist-get action :category) helixel-jump-cycle-categories)
        (let ((m (plist-get action :marker))
              (buf (plist-get action :buffer)))
@@ -659,15 +683,22 @@ Same group = same :category, :subcat, and :buffer."
        (eq (plist-get a :buffer) (plist-get b :buffer))))
 
 (defun helixel--jump-group-start (pos)
+  "Return the group-start index for the jump entry at POS.
+Delegates to `helixel--grouped-ring-group-start' with
+`helixel--jump-same-group-p' as the same-group predicate."
   (helixel--grouped-ring-group-start helixel--jump-list pos
     #'helixel--jump-same-group-p))
 
 (defun helixel--jump-group-newest (pos)
+  "Return the newest index for the jump group containing POS.
+Delegates to `helixel--grouped-ring-group-newest' with
+`helixel--jump-same-group-p' as the same-group predicate."
   (helixel--grouped-ring-group-newest helixel--jump-list pos
     #'helixel--jump-same-group-p))
 
 (defun helixel--jump-message (pos)
-  "Format and message the current jump position."
+  "Format and message the current jump position POS.
+POS is an index into `helixel--jump-list'."
   (let* ((action (nth pos helixel--jump-list))
          (total (helixel--grouped-ring-visible-count
                  helixel--jump-list #'helixel--jump-visible-p))
@@ -703,13 +734,13 @@ in the same group."
             (funcall helixel-jump-cleanup-function))
           t)))))
 
-;; ── C-o / C-i commands ──
+;; ── Jump commands (`helixel-jump-backward'/`helixel-jump-forward') ──
 
 (defun helixel-jump-backward ()
   "Jump to the previous (older) position in the global jump list.
 Moves point to the recorded position, switching buffers if needed.
-Pushes a return entry so C-i can navigate forward to the starting point.
-Bound to C-o in normal mode."
+Pushes a return entry so `helixel-jump-forward' can navigate forward
+to the starting point."
   (interactive)
   (let* ((saved-pos helixel--jump-pos))
     (helixel-register-jump 'jump 'return)
@@ -730,7 +761,7 @@ Bound to C-o in normal mode."
 (defun helixel-jump-forward ()
   "Jump to the next (newer) position in the global jump list.
 Moves point to the recorded position, switching buffers if needed.
-Bound to C-i in normal mode."
+Bound to `helixel-jump-forward' in normal mode."
   (interactive)
   (if helixel--jump-pos
       (let ((newest (helixel--jump-group-newest helixel--jump-pos))

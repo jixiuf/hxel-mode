@@ -1,67 +1,9 @@
-# helixel-mode Architecture
+# helixel-mode Architecture (Detailed)
 
-## File Responsibilities
+> **基础信息**（文件映射、依赖图、数据结构、核心 API、Refactor 阶段）见
+> 项目根目录的 `AGENTS.md`。本文档只补充 AGENTS.md 未覆盖的详细子系统说明。
 
-| File | Role |
-|------|------|
-| `helixel.el` | Entry point: requires sub-modules, provides `helixel` feature |
-| `helixel-edit.el` | **Edit transaction model**: unified schema (`:op :sel :payload :marker`), builder, equality, display. No helixel deps — kernel module. |
-| `helixel-action.el` | Action infrastructure: ring API, `;` group-skipping, **global jump list** for `C-o`/`C-i` navigation. Stores edit txs in ring. Requires helixel-edit. |
-| `helixel-repeat.el` | Dot-repeat (`.`): recording (`helixel--record-edit` → `helixel--last-tx`), selection replay, execution dispatcher. Requires helixel-action, helixel-edit. |
-| `helixel-common.el` | State machine, keymaps, movement, editing commands, shared kill core. Requires helixel-action, helixel-textobj, helixel-repeat. |
-| `helixel-search.el` | Search & find-char engine + repeat context. Requires helixel-common. |
-| `helixel-textobj.el` | Text objects and selection. Independent of helixel-common via hooks. |
-| `helixel-delimiter.el` | Unified delimiter protocol: plist accessors, finder (`helixel-delimiter-find`), bounds (`helixel-delimiter-bounds`), builders for pair/tag/block/regex delimiters. |
-| `helixel-surround.el` | Surround operations: add, delete, replace. Uses delimiter protocol from helixel-delimiter. |
-| `helixel-test.el` | ERT test suite (316 tests) |
-
-### Dependency Graph
-
-```
-helixel-edit.el          kernel (no helixel deps)
-   ↓
-helixel-action.el        ring + ;  (requires helixel-edit)
-   ↓
-helixel-repeat.el        . infrastructure (requires helixel-action + edit)
-   ↓
-helixel-delimiter.el     delimiter protocol (standalone)
-   ↓
-helixel-textobj.el       text objects (requires helixel-delimiter)
-   ↓
-helixel-surround.el      surround ops (requires helixel-delimiter)
-   ↓
-helixel-common.el        state machine + editing (requires all above)
-   ↓
-helixel-search.el        (requires helixel-common)
-```
-
-### Edit Transaction Schema (`helixel-edit.el`)
-
-All edit operations are represented as a single plist:
-
-```elisp
-(:op     symbol    ;; kill | change | copy | replace | replace-char
-                   ;; | paste-after | paste-before | indent-left | indent-right
-                   ;; | insert-text
- :sel    plist|nil ;; selection context (:fn F :kind K) or nil
- :payload plist    ;; operator-specific data
- :marker marker)   ;; start position (for ; jumping)
-
-;; Payload per :op:
-;;   change:       (:inserted-text STRING)
-;;   replace-char: (:char CHAR)
-;;   insert-text:  (:text STRING)
-```
-
-Key functions:
-```elisp
-(helixel-edit-make op sel-ctx &rest payload-kv)  → tx
-(helixel-edit-op tx)       → :op
-(helixel-edit-sel tx)      → :sel
-(helixel-edit-payload tx)  → :payload
-(helixel-edit-equal-p a b) → boolean (ignores :marker)
-(helixel-edit-display tx)  → "d.textobj", "c", "p", etc.
-```
+---
 
 ## Action Data Model (`helixel-action.el`)
 
@@ -89,9 +31,14 @@ Actions are plists.  Universal keys + one category sub-plist keyed by keyword:
          :payload nil :marker <M>))
 ```
 
-**Dedup removed from `action-start`** (2026-05): `helixel-action-start` now **always** pushes the old valid action to ring and **always** creates a fresh marker. The session-continuity dedup that collapsed `www` into one entry is gone.
+**Dedup removed from `action-start`** (2026-05): `helixel-action-start` now
+**always** pushes the old valid action to ring and **always** creates a fresh
+marker. The session-continuity dedup that collapsed `www` into one entry is gone.
 
-**Group-skipping in `;`**: Consecutive ring entries with the same `(category subcat)` form a "group". `;` cycling jumps to the **oldest** entry of each group (via `helixel-action--cycle-group-start`), preserving the original UX while keeping a complete ring.`
+**Group-skipping in `;`**: Consecutive ring entries with the same
+`(category subcat)` form a "group". `;` cycling jumps to the **oldest** entry
+of each group (via `helixel-action--cycle-group-start`), preserving the original
+UX while keeping a complete ring.
 
 ### Accessor API (also includes `edit` category setters)
 
@@ -118,7 +65,8 @@ External code must use these — no raw `plist-get`/`plist-put` on `helixel--act
 
 ### Ring API (Unified Push)
 
-All ring mutations go through `helixel-action--ring-push` which deep-copies and deduplicates (including marker position comparison):
+All ring mutations go through `helixel-action--ring-push` which deep-copies
+and deduplicates (including marker position comparison):
 
 ```elisp
 (helixel-action-start cat subcat)            ;; **always** pushes old valid action, always fresh marker
@@ -130,60 +78,15 @@ All ring mutations go through `helixel-action--ring-push` which deep-copies and 
 
 Key invariants:
 - Ring entries are deep-copied; never alias live action
-- `action-start` always pushes the old action and creates a fresh marker (no session-continuity dedup)
-- `;` cycling uses group-skipping: consecutive same `(category subcat)` entries are shown as one group
+- `action-start` always pushes the old action and creates a fresh marker
+  (no session-continuity dedup)
+- `;` cycling uses group-skipping: consecutive same `(category subcat)` entries
+  are shown as one group
 - `:dir` on actions set at creation, never mutated after commit
-- Repeat direction lives in `helixel--repeat-dir` (search.el), separate from action `:dir`
-- Content dedup in `ring-push` compares marker positions to distinguish same-type operations at different locations
-
-### `helixel-define-command` Macro
-
-All helixel editing commands are defined via `helixel-define-command`, which
-expands action-tracking boilerplate inline at compile time (zero hooks, zero advice):
-
-```elisp
-(helixel-define-command NAME METADATA &rest BODY)
-
-;; METADATA plist keys:
-;;   :category      CAT  — action category (movement, edit, search, state, etc.)
-;;   :subcat        SUB  — action subcategory (word, kill, insert, etc.)
-;;   :dir           DIR  — direction for n/N repeat context (forward, backward)
-;;   :edit-op       OP   — calls (helixel--record-edit OP) for . repeat
-;;   :clear-highlights    — default t for :category movement, nil otherwise
-;;   :params        PARAM-LIST — optional function parameter list
-;;
-;; The macro expands to a defun with the following injected before BODY:
-;;   (helixel-action-start CAT SUB)         ; for ; and C-o/C-i
-;;   (helixel--live-cat-set-dir DIR)        ; for n/N repeat
-;;   (helixel--record-edit OP)              ; for . repeat
-;;   (helixel--clear-highlights)            ; when enabled
-;; After BODY:
-;;   (helixel--track-visual-move NAME)      ; in visual mode only
-
-;; Example — movement command:
-(helixel-define-command helixel-forward-word-start
-  (:category movement :subcat word :dir forward)
-  (helixel--forward-beginning 'helixel-word))
-
-;; Example — edit command:
-(helixel-define-command helixel-kill-thing-at-point
-  (:category edit :subcat kill :edit-op kill)
-  (helixel--delete-selection)
-  (helixel--clear-data))
-
-;; Example — with explicit params and interactive form:
-(helixel-define-command helixel-goto-line
-  (:category movement :subcat goto :params (&optional arg))
-  (interactive "P")
-  (goto-line (if arg (prefix-numeric-value arg) (goto-line-read-args))))
-
-;; Not recorded by .: pass :clear-highlights nil to suppress highlight clearing
-(helixel-define-command helixel-select-line
-  (:category movement :subcat lineselect :dir forward
-   :params (&optional count) :clear-highlights nil)
-  (interactive "p")
-  ...)
-```
+- Repeat direction lives in `helixel--repeat-dir` (search.el), separate from
+  action `:dir`
+- Content dedup in `ring-push` compares marker positions to distinguish
+  same-type operations at different locations
 
 ### `helixel-define-movement` API
 
@@ -203,6 +106,8 @@ Wraps a builtin Emacs command with action tracking.  Internally delegates to
 ;; Example (advice):
 (helixel-define-movement nil forward-char char :dir forward :advice)
 ```
+
+---
 
 ## Search & Find-Char (`helixel-search.el`)
 
@@ -224,13 +129,18 @@ Wraps a builtin Emacs command with action tracking.  Internally delegates to
 
 ### Architecture
 
-- **`/ ?`**: use isearch with `isearch-mode-end-hook` to commit result to action ring and set `helixel--repeat-data`
-- **`* #`**: extract symbol, build regex, run isearch, commit to ring and set repeat-data
-- **`f F t T`**: store type/char in `helixel--action` plist, delegate to `helixel-search--find-char-exec`, set repeat-data
-- **`n N`**: `n` reads `helixel--repeat-category` and `helixel--repeat-dir`; `N` flips direction then delegates to `n`
-- **`C-u n/N`**: delegate to `helixel-search--from-history` which uses `action-start` + sets repeat context
+- **`/ ?`**: use isearch with `isearch-mode-end-hook` to commit result to action
+  ring and set `helixel--repeat-data`
+- **`* #`**: extract symbol, build regex, run isearch, commit to ring and set
+  repeat-data
+- **`f F t T`**: store type/char in `helixel--action` plist, delegate to
+  `helixel-search--find-char-exec`, set repeat-data
+- **`n N`**: `n` reads `helixel--repeat-category` and `helixel--repeat-dir`;
+  `N` flips direction then delegates to `n`
+- **`C-u n/N`**: delegate to `helixel-search--from-history` which uses
+  `action-start` + sets repeat context
 
-### Repeat Context (`helixel-search.el`)
+### Repeat Context
 
 Separate from `helixel--action :dir` — direction for n/N repeat lives in:
 
@@ -242,12 +152,13 @@ helixel--repeat-data  ;; plist: :category, :pattern or :type/:char
 Set by `/`, `*`, `f` etc. and `C-u n/N`.
 Read by `n` via `helixel-repeat-category()` and `helixel-repeat-dir()`.
 Flipped by `N` via `helixel-repeat-flip-dir()`.
-Never mutates `helixel--action :dir`, which is a historical record set at action creation.
+Never mutates `helixel--action :dir`, which is a historical record set at
+action creation.
 
-Why separate repeat-dir from action :dir:
-- `helixel--action :dir` is set once at creation and must never be mutated after
-  commit (otherwise content-based dedup would see the changed `:dir` and push
-  duplicate ring entries).
+Why separate repeat-dir from action `:dir`:
+- `helixel--action :dir` is set once at creation and must never be mutated
+  after commit (otherwise content-based dedup would see the changed `:dir`
+  and push duplicate ring entries).
 - `helixel--repeat-dir` is independent state that `N` can freely flip without
   touching any ring entry.
 - This structural separation eliminates the aliasing/direction-corruption bugs.
@@ -282,8 +193,10 @@ during cycling but remain in the ring for dedup purposes.")
 
 - `C-u n`: pick from history, execute in the entry's **stored** direction
 - `C-u N`: pick from history, execute in the **opposite** of stored direction
-- Both record the picked entry in `helixel--repeat-data` and create a new action via `helixel-action-start`
-- Syncs ring front's `:dir` when the picked entry IS the ring front (for display consistency)
+- Both record the picked entry in `helixel--repeat-data` and create a new
+  action via `helixel-action-start`
+- Syncs ring front's `:dir` when the picked entry IS the ring front (for
+  display consistency)
 
 ### Core Functions
 
@@ -309,55 +222,7 @@ during cycling but remain in the ring for dedup purposes.")
 
 ---
 
-## Repeat Edit (`.`) — Transaction-Driven Architecture
-
-### Overview
-
-All editing operations are represented as **edit transactions** (`helixel-edit.el`),
-a unified schema consumed by repeat (`.`), action ring (`;`), and editing commands.
-
-A transaction is a plist: `(:op OP :sel SEL-CTX :payload PAYLOAD :marker MARKER)`.
-
-### Data Flow
-
-```
-selection cmd → set helixel--repeat-sel-ctx
-  ↓
-edit cmd → helixel--record-edit(op, &rest payload-kv)
-  ↓
-helixel-edit-make(op, sel-ctx, payload) → tx (:op :sel :payload :marker)
-  ↓
-helixel--last-tx = tx            (dot-repeat consumer)
-helixel--live-edit-set(tx)       (action ring — ; jumping consumer)
-  ↓
-. → helixel-repeat-edit()
-  → helixel--recreate-selection(edit-sel tx)
-  → helixel--execute-edit(tx)    (unified dispatcher)
-```
-
-### Key Variables
-
-```elisp
-;; helixel-repeat.el:
-helixel--repeat-sel-ctx       ;; Set by selection, consumed by record-edit
-helixel--last-tx               ;; Latest transaction (:op :sel :payload :marker)
-helixel--change-track-marker   ;; Tracks inserted text (change/insert operations)
-helixel--inhibit-repeat-record ;; Prevents re-recording during . and compound cmds
-
-;; helixel-edit.el (kernel, no side effects):
-;; No buffer-local state — pure data functions.
-```
-
-### Selection Replay
-
-`helixel--recreate-selection(sel-ctx)` is the unified dispatcher:
-- `:fn` present → `(funcall fn)` (textobj, line, rect)
-- `:kind movement` → replay `:moves` list with visual state binding
-
-### Execution Dispatcher
-
-`helixel--execute-edit(tx)` maps `:op` to the appropriate execution function.
-`helixel-repeat-edit` is now 5 lines: read tx → recreate selection → execute.
+## Repeat Edit (`.`) — Detailed Tables
 
 ### Shared Kill Core (`helixel-common.el`)
 
@@ -372,43 +237,6 @@ helixel--inhibit-repeat-record ;; Prevents re-recording during . and compound cm
 | `kill-thing-at-point` | yes | yes | yes | no |
 | `change-thing-at-point` | yes | yes | no | yes |
 | `repeat-change-core` (`.`) | no (inhibited) | yes | no | no (insert text) |
-
-### Recording Details
-
-`helixel--record-edit(operator &rest extra)` builds a tx via `helixel-edit-make`,
-stores it in `helixel--last-tx`, and pushes to the action ring. The `extra` kwargs
-become the tx `:payload`.
-
-The `helixel--inhibit-repeat-record` variable is bound to `t` during:
-- `helixel-repeat-edit` (to prevent `.` from overwriting `last-tx`)
-- `helixel-replace` → `helixel-yank` internal call (to prevent double-record)
-
-### Supported Operations
-
-| Key | Operator | Requires sel-ctx? | Payload |
-|-----|----------|-------------------|---------|
-| `d` | `kill` | yes | nil |
-| `c` | `change` | yes | `(:inserted-text STRING)` |
-| `y` | `copy` | yes | nil |
-| `r` | `replace` | no | nil |
-| `R` | `replace-char` | no | `(:char CHAR)` |
-| `p` | `paste-after` | no | nil |
-| `P` | `paste-before` | no | nil |
-| `<` | `indent-left` | yes (line) | nil |
-| `>` | `indent-right` | yes (line) | nil |
-| `i`/`I`/`a`/`A`/`o`/`O` | `insert-text` | no | `(:text STRING)` |
-
-Sel-ctx structure:
-- `(:fn FUNCTION :kind textobj|line|rect)` — replay by calling the function
-- `(:kind movement :moves ((FN . COUNT) ...))` — replay in visual state to extend region
-
-### Not Recorded
-
-Commands that do NOT generate repeatable edits:
-- `undo`/`undo-redo` (`u`/`U`)
-- State transitions (entry to insert not via `c`/`i`/etc. is recorded)
-- Search/find-char (use `n`/`N` instead)
-- Colon commands (`:`)
 
 ### Future Extensions
 
@@ -426,8 +254,8 @@ Commands that do NOT generate repeatable edits:
 
 ### Decoupling via Hooks
 
-`helixel-textobj.el` has no `(require 'helixel-common)` dependency. It exposes two hook
-variables that `helixel-common.el` injects after loading:
+`helixel-textobj.el` has no `(require 'helixel-common)` dependency. It exposes
+two hook variables that `helixel-common.el` injects after loading:
 
 ```elisp
 (defvar helixel-textobj-action-function nil
@@ -444,13 +272,13 @@ variables that `helixel-common.el` injects after loading:
       (lambda () (eq helixel--current-state 'visual)))
 ```
 
-This means `helixel-textobj.el` can be extracted as a third-party package — callers
-just set the two hooks.
+This means `helixel-textobj.el` can be extracted as a third-party package —
+callers just set the two hooks.
 
 ### Word/WORD Movement Helpers
 
-`helixel-textobj.el` provides the building blocks that both text object selection
-and movement commands share:
+`helixel-textobj.el` provides the building blocks that both text object
+selection and movement commands share:
 
 ```elisp
 (helixel--forward-beginning THING &optional COUNT)  ; w / b
@@ -474,8 +302,9 @@ Movement commands in `helixel-common.el` delegate to these:
 | — | `helixel-backward-symbol-end` | `(helixel--forward-end 'helixel-symbol -1)` |
 | — | `helixel-backward-WORD-end` | `(helixel--forward-end 'helixel-WORD -1)` |
 
-Text objects (`iw`,`aw`,`iW`,`aW`) use the same underlying `helixel--forward-word` /
-`helixel--forward-WORD` forward-ops via the thing-at-point system.
+Text objects (`iw`,`aw`,`iW`,`aW`) use the same underlying
+`helixel--forward-word` / `helixel--forward-WORD` forward-ops via the
+thing-at-point system.
 
 ### Selection Activation Helper
 
@@ -526,10 +355,12 @@ additional patterns.
 | block | `block` | `mic` `mac` |
 
 Different subcats create independent sessions for `;`.
-All text objects call the action hook (`helixel-textobj-action-function`) when
-available, which `helixel-common.el` wires to `helixel-action-start`.
+All text objects call the action hook (`helixel-textobj-action-function`)
+when available, which `helixel-common.el` wires to `helixel-action-start`.
 
-## `helixel-define-key` API
+---
+
+## Keybinding API
 
 ```elisp
 (helixel-define-key STATE KEY DEF &optional MODE)
@@ -543,13 +374,14 @@ available, which `helixel-common.el` wires to `helixel-action-start`.
 
 ### Overview
 
-Analogous to Vim's jumplist — `C-o` jumps to older positions, `C-i` (Tab) jumps
-to newer positions.  Unlike `;` which only sets mark, jump commands **move point**
-and support **cross-buffer** navigation.
+Analogous to Vim's jumplist — `C-o` jumps to older positions, `C-i` (Tab)
+jumps to newer positions.  Unlike `;` which only sets mark, jump commands
+**move point** and support **cross-buffer** navigation.
 
 The jump list is a **global** ring (`helixel--jump-list`) that mirrors the
-buffer-local action ring.  Every action committed via `helixel-action--ring-push`
-is also pushed to the jump list (filtered by `helixel-jump-categories`).
+buffer-local action ring.  Every action committed via
+`helixel-action--ring-push` is also pushed to the jump list (filtered by
+`helixel-jump-categories`).
 
 ### Entry Format
 
@@ -602,10 +434,12 @@ algorithm via generic parameterized helpers in `helixel-action.el`:
 ```
 
 Usage:
-- `;` cycling: `same-group-pred` = `helixel-action--same-group-p` (category+subcat),
-  `visible-pred` = `helixel-action--cycle-visible-p` (checks `cycle-categories`)
-- C-o/C-i: `same-group-pred` = `helixel--jump-same-group-p` (category+subcat+buffer),
-  `visible-pred` = `helixel--jump-visible-p` (checks `jump-cycle-categories` + live marker)
+- `;` cycling: `same-group-pred` = `helixel-action--same-group-p`
+  (category+subcat), `visible-pred` = `helixel-action--cycle-visible-p`
+  (checks `cycle-categories`)
+- C-o/C-i: `same-group-pred` = `helixel--jump-same-group-p`
+  (category+subcat+buffer), `visible-pred` = `helixel--jump-visible-p`
+  (checks `jump-cycle-categories` + live marker)
 
 Consecutive entries with matching predicates are collapsed into one jump target
 (the oldest of the group).  Buffer identity is included for jumps so entries
@@ -665,4 +499,5 @@ helixel--action-ring (buffer-local)          helixel--jump-list (global)
 
 - Use `(helixel-test-with-buffer "content" body...)` for buffer tests
 - Set `this-command` and `last-command` before calling functions that use them
-- 316 ERT tests covering search, find-char, movement, textobj, surround, action tracking, history, and session management
+- 366 ERT tests covering search, find-char, movement, textobj, surround,
+  action tracking, history, and session management

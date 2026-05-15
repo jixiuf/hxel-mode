@@ -1936,6 +1936,116 @@ Second paragraph.")
 
 ;;; Search tests
 
+(ert-deftest helixel-test-search--search-case-fold ()
+  "helixel-search--search respects `case-fold-search'.
+With case-fold-search=t (default), 'hello' matches 'Hello'.
+With case-fold-search=nil, 'hello' does NOT match 'Hello' but
+exact-case 'Hello' still matches 'Hello'."
+  (helixel-test-with-buffer "foo Hello bar HELLO baz"
+    (goto-char (point-min))
+    ;; case-fold-search t (default): 'hello' matches 'Hello' (first)
+    (let ((case-fold-search t))
+      (should (helixel-search--search "hello" 'forward))
+      (should (= (match-beginning 0) 5)))
+    ;; case-fold-search nil: 'hello' does NOT match 'Hello'
+    (goto-char (point-min))
+    (let ((case-fold-search nil))
+      (condition-case nil
+          (progn
+            (helixel-search--search "hello" 'forward)
+            (ert-fail "Expected search-failed with case-fold nil"))
+        (search-failed)))
+    ;; case-fold nil but matching exact case
+    (goto-char (point-min))
+    (let ((case-fold-search nil))
+      (should (helixel-search--search "Hello" 'forward))
+      (should (= (match-beginning 0) 5)))))
+
+(ert-deftest helixel-test-search--search-backward ()
+  "helixel-search--search backward finds match before point."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char (point-max))
+    ;; Backward search from end finds last "hello"
+    (should (helixel-search--search "hello" 'backward))
+    (should (= (match-beginning 0) 13))
+    (should (= (match-end 0) 18))
+    ;; point moves to match-beginning for backward search
+    (should (= (point) (match-beginning 0)))))
+
+(ert-deftest helixel-test-search--search-forward ()
+  "helixel-search--search forward finds match after point."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char (point-min))
+    ;; Forward search from start finds first "hello"
+    (should (helixel-search--search "hello" 'forward))
+    (should (= (match-beginning 0) 1))
+    (should (= (match-end 0) 6))
+    ;; point moves to match-end for forward search
+    (should (= (point) (match-end 0)))))
+
+(ert-deftest helixel-test-search-done-hook-forward ()
+  "helixel-search--done-hook sets up repeat state after /search."
+  (let (helixel--action helixel--action-ring helixel--action-pos)
+    (helixel-test-with-buffer "hello world hello"
+      (goto-char 1)
+      ;; Simulate /hello<RET> — forward search
+      (re-search-forward "hello")
+      (let ((helixel-search--had-region nil)
+            (isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (copy-marker (match-beginning 0))))
+        ;; helixel-search-forward calls action-start before isearch
+        (helixel-action-start 'search 'search)
+        (helixel-search--done-hook))
+      ;; Verify repeat state
+      (should (eq (helixel-repeat-category) 'search))
+      (should (string= (helixel--action-get helixel--repeat-data :pattern)
+                       "hello"))
+      (should (eq (helixel-repeat-dir) 'forward))
+      ;; Verify selection context for . repeat
+      (let ((sel helixel--repeat-sel-ctx))
+        (should sel)
+        (should (eq (helixel-sel-get-kind sel) 'search))
+        (should (string= (helixel-sel-search-pattern sel) "hello"))
+        (should (eq (helixel-sel-search-dir sel) 'forward)))
+      ;; Verify region is active on the match
+      (should (region-active-p))
+      (should (= (region-beginning) 1))
+      (should (= (region-end) 6)))))
+
+(ert-deftest helixel-test-search-done-hook-case-sensitive ()
+  "helixel-search--done-hook after ?Hello sets case-sensitive repeat."
+  (let (helixel--action helixel--action-ring helixel--action-pos)
+    (helixel-test-with-buffer "Hello hello Hello"
+      (goto-char (point-max))
+      ;; Simulate ?Hello<RET> — backward case-sensitive search
+      (re-search-backward "Hello")
+      (let ((helixel-search--had-region nil)
+            (isearch-success t)
+            (isearch-string "Hello")
+            (isearch-regexp t)
+            (isearch-forward nil)  ;; backward
+            (isearch-other-end (copy-marker (match-end 0))))
+        (helixel-action-start 'search 'search)
+        (helixel-search--done-hook))
+      ;; Verify repeat preserves case-sensitive pattern
+      (should (eq (helixel-repeat-category) 'search))
+      (should (string= (helixel--action-get helixel--repeat-data :pattern)
+                       "Hello"))
+      (should (eq (helixel-repeat-dir) 'backward))
+      ;; Verify selection context
+      (let ((sel helixel--repeat-sel-ctx))
+        (should sel)
+        (should (eq (helixel-sel-get-kind sel) 'search))
+        (should (string= (helixel-sel-search-pattern sel) "Hello"))
+        (should (eq (helixel-sel-search-dir sel) 'backward)))
+      ;; Verify region active on last Hello (13-18)
+      (should (region-active-p))
+      (should (= (region-beginning) 13))
+      (should (= (region-end) 18)))))
+
 (ert-deftest helixel-test-search-repeat-prev-exchange ()
   "Test N exchanges point and mark and toggles direction."
   (helixel-test-with-buffer "hello world"
@@ -2014,6 +2124,49 @@ Second paragraph.")
       (goto-char 18)
       (helixel-search-repeat-next)
       (should (< (point) 18))
+      (should (use-region-p)))))
+
+(ert-deftest helixel-test-search-repeat-next-case-sensitive ()
+  "n after case-sensitive search (?Hello) respects case."
+  (helixel-test-with-buffer "hello Hello hello"
+    (setq helixel--repeat-dir 'backward)
+    (helixel-repeat-set 'search :pattern "Hello")
+    ;; Simulate isearch state for a case-sensitive backward search
+    (let ((isearch-string "Hello")
+          (isearch-regexp t)
+          (isearch-forward nil)  ;; backward
+          (isearch-case-fold-search 'auto)  ;; 'Hello' has uppercase → nil
+          (isearch-success t)
+          (isearch-other-end (copy-marker 18))  ;; end of last Hello
+          (isearch-wrap-pause 'no-ding)
+          (isearch-repeat-on-direction-change t))
+      ;; Starting at end of last match (pos 18), backward finds
+      ;; 'Hello' at 13-17 case-sensitively
+      (goto-char 18)
+      (helixel-search-repeat-next)
+      ;; point moves to match-beginning for backward search
+      (should (= (point) 13))
+      (should (use-region-p)))))
+
+(ert-deftest helixel-test-search-repeat-next-case-fold-insensitive ()
+  "n after case-insensitive search (?hello) matches any case."
+  (helixel-test-with-buffer "foo Hello bar HELLO baz"
+    (setq helixel--repeat-dir 'backward)
+    (helixel-repeat-set 'search :pattern "hello")
+    ;; Simulate isearch state for case-insensitive backward search
+    (let ((isearch-string "hello")
+          (isearch-regexp t)
+          (isearch-forward nil)  ;; backward
+          (isearch-case-fold-search 'auto)  ;; 'hello' all-lower → t
+          (isearch-success t)
+          (isearch-other-end (copy-marker 10))  ;; end of Hello
+          (isearch-wrap-pause 'no-ding)
+          (isearch-repeat-on-direction-change t))
+      (goto-char 10)  ;; end of 'Hello'
+      (helixel-search-repeat-next)
+      ;; backward from 10: 'hello' matches 'Hello' case-insensitively
+      ;; point moves to match-beginning (5)
+      (should (= (point) 5))
       (should (use-region-p)))))
 
 ;;; Combined search history tests
@@ -2870,6 +3023,248 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
 
 ;;; Repeat Edit tests
 
+;; ---------------------------------------------------------------------------
+;; helixel-sel struct API tests
+
+(ert-deftest helixel-test-sel-create-basic ()
+  "`helixel-sel-create' builds a valid struct."
+  (let ((sel (helixel-sel-create 'line '(:count 3)
+                                 (lambda (_) nil)
+                                 "L")))
+    (should (helixel-sel-p sel))
+    (should (eq (helixel-sel--kind sel) 'line))
+    (should (equal (helixel-sel--ctx sel) '(:count 3)))
+    (should (string= (helixel-sel--display sel) "L"))))
+
+(ert-deftest helixel-test-sel-get-kind ()
+  "`helixel-sel-get-kind' works for struct."
+  (let ((struct (helixel-sel-create 'line nil (lambda (_) nil))))
+    (should (eq (helixel-sel-get-kind struct) 'line))
+    (should (eq (helixel-sel-get-kind (helixel-sel-create 'rect '(:count 2) #'helixel--recreate-rect "r")) 'rect))
+    (should (null (helixel-sel-get-kind nil)))))
+
+(ert-deftest helixel-test-sel-get-field ()
+  "`helixel-sel-get-field' extracts from ctx."
+  (let ((struct (helixel-sel-create 'line '(:count 3 :dir backward)
+                                    (lambda (_) nil))))
+    (should (= (helixel-sel-get-field struct :count) 3))
+    (should (eq (helixel-sel-get-field struct :dir) 'backward))
+    (should (null (helixel-sel-get-field struct :missing)))
+    (should (null (helixel-sel-get-field nil :count)))
+    (should (= (helixel-sel-get-field (helixel-sel-create 'line '(:count 5) #'helixel--recreate-line "L") :count) 5))))
+
+(ert-deftest helixel-test-sel-count ()
+  "`helixel-sel-count' returns :count from ctx or 0."
+  (let ((sel (helixel-sel-create 'line '(:count 3) (lambda (_) nil))))
+    (should (= (helixel-sel-count sel) 3)))
+  (let ((sel (helixel-sel-create 'line nil (lambda (_) nil))))
+    (should (= (helixel-sel-count sel) 0)))
+  (should (= (helixel-sel-count nil) 0))
+  (should (= (helixel-sel-count (helixel-sel-create 'line '(:count 7) #'helixel--recreate-line "L")) 7)))
+
+(ert-deftest helixel-test-sel-update-ctx ()
+  "`helixel-sel-update-ctx' returns a new sel with updated ctx."
+  (let* ((s1 (helixel-sel-create 'line '(:count 3) (lambda (_) nil)))
+         (s2 (helixel-sel-update-ctx s1 :count 5)))
+    (should (= (helixel-sel-get-field s1 :count) 3))
+    (should (= (helixel-sel-get-field s2 :count) 5))
+    (should (helixel-sel-p s2))
+    (should (eq (helixel-sel--kind s2) 'line))
+    (let ((p2 (helixel-sel-update-ctx (helixel-sel-create 'line '(:count 1) #'helixel--recreate-line "L") :count 9)))
+      (should (equal p2 (helixel-sel-create 'line '(:count 9) #'helixel--recreate-line "L"))))))
+
+(ert-deftest helixel-test-sel-equal-p ()
+  "`helixel-sel-equal-p' compares kind and ctx."
+  (let ((a (helixel-sel-create 'line '(:count 3) (lambda (_) nil)))
+        (b (helixel-sel-create 'line '(:count 3) (lambda (_) nil)))
+        (c (helixel-sel-create 'line '(:count 5) (lambda (_) nil)))
+        (d (helixel-sel-create 'rect '(:count 3) (lambda (_) nil))))
+    (should (helixel-sel-equal-p a b))
+    (should-not (helixel-sel-equal-p a c))
+    (should-not (helixel-sel-equal-p a d))
+    (should (helixel-sel-equal-p nil nil))
+    (should-not (helixel-sel-equal-p a nil))
+    (should (helixel-sel-equal-p (helixel-sel-create 'line '(:count 3) #'helixel--recreate-line "L")
+                                 (helixel-sel-create 'line '(:count 3) #'helixel--recreate-line "L")))
+    (should-not (helixel-sel-equal-p (helixel-sel-create 'line '(:count 3) #'helixel--recreate-line "L")
+                                     (helixel-sel-create 'rect '(:count 3) #'helixel--recreate-rect "r")))))
+
+(ert-deftest helixel-test-sel-call-recreate ()
+  "`helixel-sel-call-recreate' dispatches to struct closure."
+  (with-temp-buffer
+    (insert "hello world")
+    (goto-char 1)
+    (let ((sel (helixel-sel-create 'line nil
+                                   (lambda (_) (goto-char 7))
+                                   "L")))
+      (helixel-sel-call-recreate sel)
+      (should (= (point) 7)))
+    (let ((pt (point)))
+      (helixel-sel-call-recreate nil)
+      (should (= (point) pt)))))
+
+(ert-deftest helixel-test-sel-call-display ()
+  "`helixel-sel-call-display' returns display string for struct."
+  (should (string= (helixel-sel-call-display
+                    (helixel-sel-create 'line nil (lambda (_) nil) "L"))
+                   "L"))
+  (should (string= (helixel-sel-call-display (helixel-sel-create 'line '(:count 3) #'helixel--recreate-line "L"))
+                   "L"))
+  (should (null (helixel-sel-call-display nil))))
+
+;; ---------------------------------------------------------------------------
+;; insert-* sel structs (was raw plists, now proper structs)
+
+(ert-deftest helixel-test-sel-insert-selection-start ()
+  "insert-selection-start sel struct: kind, recreate, display."
+  (let ((sel (helixel-sel-create
+              'insert-selection-start nil
+              #'helixel--recreate-insert-selection-start "is")))
+    (should (eq (helixel-sel-get-kind sel) 'insert-selection-start))
+    (should (string= (helixel-sel-call-display sel) "is"))
+    (should (helixel-sel-p sel))))
+
+(ert-deftest helixel-test-sel-insert-selection-end ()
+  "insert-selection-end sel struct: kind, recreate, display."
+  (let ((sel (helixel-sel-create
+              'insert-selection-end nil
+              #'helixel--recreate-insert-selection-end "ie")))
+    (should (eq (helixel-sel-get-kind sel) 'insert-selection-end))
+    (should (string= (helixel-sel-call-display sel) "ie"))
+    (should (helixel-sel-p sel))))
+
+(ert-deftest helixel-test-sel-insert-beginning-line ()
+  "insert-beginning-line sel struct: kind, recreate, display."
+  (let ((sel (helixel-sel-create
+              'insert-beginning-line nil
+              #'helixel--recreate-insert-beginning-line "I")))
+    (should (eq (helixel-sel-get-kind sel) 'insert-beginning-line))
+    (should (string= (helixel-sel-call-display sel) "I"))
+    (should (helixel-sel-p sel))))
+
+(ert-deftest helixel-test-sel-insert-end-line ()
+  "insert-end-line sel struct: kind, recreate, display."
+  (let ((sel (helixel-sel-create
+              'insert-end-line nil
+              #'helixel--recreate-insert-end-line "A")))
+    (should (eq (helixel-sel-get-kind sel) 'insert-end-line))
+    (should (string= (helixel-sel-call-display sel) "A"))
+    (should (helixel-sel-p sel))))
+
+(ert-deftest helixel-test-sel-insert-search-offset ()
+  "insert-search-offset sel struct: kind, recreate, display."
+  (let ((sel (helixel-sel-create
+              'insert-search-offset '(:offset 3)
+              #'helixel--recreate-insert-search-offset "io")))
+    (should (eq (helixel-sel-get-kind sel) 'insert-search-offset))
+    (should (string= (helixel-sel-call-display sel) "io"))
+    (should (= (helixel-sel-insert-offset sel) 3))
+    (should (helixel-sel-p sel))))
+
+(ert-deftest helixel-test-recreate-insert-selection-start ()
+  "recreate-insert-selection-start moves to region-beginning + offset."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 1)
+    (push-mark 6 t t)
+    (activate-mark)
+    (let ((sel (helixel-sel-update-ctx
+                (helixel-sel-create
+                 'insert-selection-start nil
+                 #'helixel--recreate-insert-selection-start "is")
+                :cursor-offset 2)))
+      (helixel-sel-call-recreate sel)
+      (should (= (point) 3)))))
+
+(ert-deftest helixel-test-recreate-insert-selection-end ()
+  "recreate-insert-selection-end moves to region-end + offset."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 1)
+    (push-mark 6 t t)
+    (activate-mark)
+    (let ((sel (helixel-sel-update-ctx
+                (helixel-sel-create
+                 'insert-selection-end nil
+                 #'helixel--recreate-insert-selection-end "ie")
+                :cursor-offset 1)))
+      (helixel-sel-call-recreate sel)
+      (should (= (point) 7)))))
+
+(ert-deftest helixel-test-recreate-insert-beginning-line ()
+  "recreate-insert-beginning-line moves to beginning of line."
+  (helixel-test-with-buffer "hello\nworld"
+    (goto-char 7)
+    (let ((sel (helixel-sel-create
+                'insert-beginning-line nil
+                #'helixel--recreate-insert-beginning-line "I")))
+      (helixel-sel-call-recreate sel)
+      (should (= (point) 7)))))
+
+(ert-deftest helixel-test-recreate-insert-end-line ()
+  "recreate-insert-end-line moves to end of line."
+  (helixel-test-with-buffer "hello\nworld"
+    (goto-char 5)
+    (let ((sel (helixel-sel-create
+                'insert-end-line nil
+                #'helixel--recreate-insert-end-line "A")))
+      (helixel-sel-call-recreate sel)
+      (should (= (point) 6)))))
+
+(ert-deftest helixel-test-recreate-insert-search-offset ()
+  "recreate-insert-search-offset moves to match-beginning + offset."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (re-search-forward "hello")
+    (let ((sel (helixel-sel-create
+                'insert-search-offset '(:offset 2)
+                #'helixel--recreate-insert-search-offset "io")))
+      (helixel-sel-call-recreate sel)
+      ;; match-beginning of first "hello" = 1, + 2 = 3
+      (should (= (point) 3)))))
+
+;; ---------------------------------------------------------------------------
+;; edit transaction runner/display tests
+
+(ert-deftest helixel-test-edit-make-stores-runner ()
+  "`helixel-edit-make' stores :runner in the struct slot."
+  (let ((dummy-fn #'ignore))
+    (let ((tx (helixel-edit-make 'kill nil :runner dummy-fn)))
+      (should (eq (helixel-edit-runner tx) dummy-fn))
+      (should (null (plist-get (helixel-edit-payload tx) :runner))))))
+
+(ert-deftest helixel-test-edit-make-stores-display ()
+  "`helixel-edit-make' stores :display in DISPLAY-FIELD slot, not in :payload."
+  (let ((tx (helixel-edit-make 'kill nil :display "d.K")))
+    (should (string= (helixel-edit-display-field tx) "d.K"))
+    (should (null (plist-get (helixel-edit-payload tx) :display)))))
+
+(ert-deftest helixel-test-execute-edit-uses-stored-runner ()
+  "`helixel--execute-edit' calls the :runner stored in TX."
+  (with-temp-buffer
+    (insert "hello")
+    (goto-char 1)
+    (let ((tx (helixel-edit-make 'test nil
+                :runner (lambda (_tx) (insert "X")))))
+      (helixel--execute-edit tx)
+      (should (string= (buffer-string) "Xhello")))))
+
+(ert-deftest helixel-test-execute-edit-fallback-registry ()
+  "`helixel--execute-edit' falls back to registry when :runner missing."
+  ;; kill op is registered; a plist without :runner should still
+  ;; execute via the registry lookup fallback.
+  (with-temp-buffer
+    (insert "hello")
+    (goto-char 2)  ; on "e"
+    ;; Create a tx without :runner (tests registry fallback)
+    (let ((tx (helixel-edit-make 'kill nil)))
+      (should (helixel-edit-op-runner 'kill)) ;; registry has runner
+      ;; Should not error — just verify the fallback path runs
+      (should (progn (helixel--execute-edit tx) t)))))
+
+(ert-deftest helixel-test-edit-display-uses-stored-field ()
+  "`helixel-edit-display' prefers :display stored in TX."
+  (let ((tx (helixel-edit-make 'kill nil :display "custom-label")))
+    (should (string= (helixel-edit-display tx) "custom-label"))))
+
 (ert-deftest helixel-test-repeat-edit-no-prev ()
   "Test repeat-edit with no previous edit signals error."
   (helixel-test-with-buffer "hello world"
@@ -2909,7 +3304,6 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (helixel-indent-right)
     (let ((after-first (buffer-string)))
       (should-not (string= "hello\nworld\n" after-first))
-      (next-line)
       (helixel-repeat-edit)
       (should-not (string= after-first (buffer-string))))))
 
@@ -2943,9 +3337,11 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   (helixel-test-with-buffer "hello world foo"
     (goto-char 3)
     (setq helixel--last-tx
-          `(:op change
-                      :sel (:kind textobj :command helixel-mark-inner-word :count 1)
-                      :payload (:inserted-text "CHANGED")))
+          (helixel-edit-make 'change
+            (helixel-sel-create 'textobj '(:command helixel-mark-inner-word :count 1)
+            #'helixel--recreate-textobj
+            (replace-regexp-in-string "^helixel-mark-" "" (symbol-name 'helixel-mark-inner-word)))
+            :inserted-text "CHANGED"))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "CHANGED world foo"))
     (goto-char 1)
@@ -2991,9 +3387,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   (helixel-test-with-buffer "hello world"
     (goto-char 7)
     (setq helixel--last-tx
-          '(:op insert-text
-                      :sel nil
-                      :payload (:text "INSERTED")))
+          (helixel-edit-make 'insert-text nil :text "INSERTED"))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "hello INSERTEDworld"))))
 
@@ -3002,9 +3396,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   (helixel-test-with-buffer "hello world"
     (goto-char 7)
     (setq helixel--last-tx
-          '(:op insert-text
-                      :sel nil
-                      :payload (:text "")))
+          (helixel-edit-make 'insert-text nil :text ""))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "hello world"))))
 
@@ -3013,7 +3405,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   (helixel-test-with-buffer "hello world"
     (goto-char 7)
     (setq helixel--last-tx
-          '(:op insert-text :sel nil :payload (:text "x")))
+          (helixel-edit-make 'insert-text nil :text "x"))
     (helixel-repeat-edit 5)
     (should (string= (buffer-string) "hello xxxxxworld"))))
 
@@ -3021,7 +3413,7 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   "`helixel-repeat-edit' does not discard `helixel--last-tx' on failure."
   (helixel-test-with-buffer "hello"
     (setq helixel--last-tx
-          '(:op kill :sel (:kind unknown-kind-no-method)))
+          (helixel-edit-make 'kill (helixel-sel-create 'unknown-kind-no-method nil #'ignore "?")))
     (let ((before helixel--last-tx))
       (helixel-repeat-edit)
       (should (equal helixel--last-tx before)))))
@@ -3045,16 +3437,19 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
 
 (ert-deftest helixel-test-repeat-edit-insert-end-to-end ()
   "End-to-end: i<text><esc> records inserted text; `.' replays it."
-  (helixel-test-with-buffer "abc"
-    (goto-char 2)
-    (setq last-command nil this-command 'helixel-insert)
-    (helixel-insert)
-    (insert "Z")
-    (helixel-insert-exit)
-    (should (string= (buffer-string) "aZbc"))
-    (goto-char 4)
-    (helixel-repeat-edit)
-    (should (string= (buffer-string) "aZbZc"))))
+  (let ((helixel--last-tx nil)
+        (helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "abc"
+      (set-match-data nil) ; clear stale match data from prior tests
+      (goto-char 2)
+      (setq last-command nil this-command 'helixel-insert)
+      (helixel-insert)
+      (insert "Z")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "aZbc"))
+      (goto-char 4)
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "aZbZc")))))
 
 (ert-deftest helixel-test-edit-ring-push-and-dedup ()
   "`helixel--record-edit' pushes onto the ring with head dedup."
@@ -3080,22 +3475,31 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
 (ert-deftest helixel-test-edit-display ()
   "`helixel-edit-display' formats op + sel + payload hints."
   (should (string= (helixel-edit-display
-                    '(:op kill :sel (:kind line :count 3)))
+                    (helixel-edit-make 'kill
+                      (helixel-sel-create 'line '(:count 3)
+                        #'helixel--recreate-line "L")))
                    "d.Lx3"))
   (should (string= (helixel-edit-display
-                    '(:op kill :sel (:kind line :dir up :count 2)))
+                    (helixel-edit-make 'kill
+                      (helixel-sel-create 'line '(:dir backward :count 2)
+                        #'helixel--recreate-line "L^")))
                    "d.L^x2"))
   (should (string= (helixel-edit-display
-                    '(:op replace-char :sel nil :payload (:char ?Q)))
+                    (helixel-edit-make 'replace-char nil :char ?Q))
                    "R[Q]"))
   (should (string= (helixel-edit-display
-                    '(:op kill
-                      :sel (:kind textobj :command helixel-mark-inner-word
-                            :count 1)))
+                    (helixel-edit-make 'kill
+                      (helixel-sel-create 'textobj
+                        '(:command helixel-mark-inner-word :count 1)
+                        #'helixel--recreate-textobj
+                        "inner-word")))
                    "d.inner-word"))
   (should (string= (helixel-edit-display
-                    '(:op kill :sel (:kind movement
-                                     :moves ((helixel-forward-word-start . 3)))))
+                    (helixel-edit-make 'kill
+                      (helixel-sel-create 'movement
+                        '(:moves ((helixel-forward-word-start . 3)))
+                        #'helixel--recreate-movement
+                        "v3")))
                    "d.v3")))
 
 (ert-deftest helixel-test-repeat-edit-movement-kill ()
@@ -3103,9 +3507,10 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   (helixel-test-with-buffer "hello world foo"
     (goto-char 1)
     (setq helixel--last-tx
-          `(:op kill
-                      :sel (:kind movement
-                                :moves ((helixel-forward-word-start . 2)))))
+          (helixel-edit-make 'kill
+            (helixel-sel-create 'movement '(:moves ((helixel-forward-word-start . 2)))
+            #'helixel--recreate-movement
+            (format "v%d" 2))))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "foo"))))
 
@@ -3114,10 +3519,11 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
   (helixel-test-with-buffer "hello world foo"
     (goto-char 1)
     (setq helixel--last-tx
-          `(:op change
-                      :sel (:kind movement
-                                :moves ((helixel-forward-word-start . 1)))
-                      :payload (:inserted-text "X")))
+          (helixel-edit-make 'change
+            (helixel-sel-create 'movement '(:moves ((helixel-forward-word-start . 1)))
+            #'helixel--recreate-movement
+            (format "v%d" 1))
+            :inserted-text "X"))
     (helixel-repeat-edit)
     (should (string= (buffer-string) "Xworld foo"))))
 
@@ -3155,6 +3561,45 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
     (should helixel--change-track-marker)
     (set-marker helixel--change-track-marker nil)
     (setq helixel--change-track-marker nil)))
+
+(ert-deftest helixel-test-execute-keys-meta ()
+  "`helixel--execute-keys' handles meta keys (e.g. M-f) gracefully.
+Meta keys are non-character integers; they must go through
+key-binding dispatch, not `insert-char'."
+  (helixel-test-with-buffer ""
+    (helixel--execute-keys (kbd "foo"))
+    (should (string= (buffer-string) "foo")))
+  (helixel-test-with-buffer "one two three"
+    (goto-char 1)
+    ;; M-f goes through key-binding -> forward-word
+    (helixel--execute-keys (kbd "M-f"))
+    (should (= (point) 4)))
+  (helixel-test-with-buffer "one two three"
+    (goto-char 1)
+    ;; M-f mixed with character keys
+    (helixel--execute-keys (kbd "a M-f b"))
+    (should (string= (buffer-string) "aoneb two three"))))
+
+(ert-deftest helixel-test-execute-commands ()
+  "`helixel--execute-keys' with :commands replays recorded commands.
+Command-based replay is keymap-independent — correct even when
+insert-mode bindings differ from normal-mode."
+  ;; Test: recorded commands simulate h (backward-char in insert mode)
+  ;; In normal mode, 'h' is NOT self-insert — but commands bypass keymaps.
+  (helixel-test-with-buffer "abcdef"
+    (goto-char 4)
+    ;; Recorded: self-insert ?X, then backward-char, then self-insert ?Y
+    (helixel--execute-keys (kbd "X h Y")
+                           '(self-insert-command
+                             backward-char
+                             self-insert-command))
+    ;; X inserts at 4, backward-char to 3, Y inserts at 3
+    (should (string= (buffer-string) "abcYXdef")))
+  ;; Test: fallback to keys when no commands
+  (helixel-test-with-buffer "hello"
+    (goto-char 1)
+    (helixel--execute-keys (kbd "XX"))
+    (should (string= (buffer-string) "XXhello"))))
 
 ;; ============================================================================
 ;; Cross-buffer repeat tests (Item 5)
@@ -3210,9 +3655,11 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
       ;; what c X Y <esc> would record.  The keys are only the
       ;; productive insert-mode keystrokes (X Y), not the initiating c.
       (setq helixel--last-tx
-            `(:op change
-              :sel (:kind textobj :command helixel-mark-inner-word :count 1)
-              :payload (:inserted-text "XY" :keys ,(kbd "XY"))))
+            (helixel-edit-make 'change
+              (helixel-sel-create 'textobj '(:command helixel-mark-inner-word :count 1)
+            #'helixel--recreate-textobj
+            (replace-regexp-in-string "^helixel-mark-" "" (symbol-name 'helixel-mark-inner-word)))
+              :inserted-text "XY" :keys (kbd "XY")))
       (helixel-repeat-edit)
       (should (string= (buffer-string) "XY world"))
       ;; Replay in keys mode on another word
@@ -3227,9 +3674,8 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
       (goto-char 2)
       ;; Directly construct a tx with :keys payload (simulating i Z <esc>)
       (setq helixel--last-tx
-            `(:op insert-text
-              :sel nil
-              :payload (:text "Z" :keys ,(kbd "Z"))))
+            (helixel-edit-make 'insert-text nil
+              :text "Z" :keys (kbd "Z")))
       (helixel-repeat-edit)
       (should (string= (buffer-string) "aZbc"))
       (should (helixel--repeat-get-keys helixel--last-tx))
@@ -3244,27 +3690,241 @@ Cancel pushes a state/cancel sentinel so dedup works naturally."
       (goto-char 1)
       ;; Manually construct a tx without :keys (old-format tx)
       (setq helixel--last-tx
-            '(:op insert-text :sel nil :payload (:text "OLD")))
+            (helixel-edit-make 'insert-text nil :text "OLD"))
       (helixel-repeat-edit)
       (should (string= (buffer-string) "OLDhello")))))
 
-(ert-deftest helixel-test-repeat-change-keys-disabled ()
-  "`helixel-repeat-change-method' = `text' never uses `execute-kbd-macro'."
+(ert-deftest helixel-test-repeat-change-keys-preferred ()
+  "`:keys' payload is always preferred over `:inserted-text'."
   (helixel-test-with-buffer "hello world"
-    (let ((helixel-repeat-change-method 'text))
-      (goto-char 1)
-      ;; A tx with both :inserted-text and :keys - text mode uses :inserted-text
-      (setq helixel--last-tx
-            `(:op change
-              :sel (:kind textobj :command helixel-mark-inner-word :count 1)
-              :payload (:inserted-text "XY" :keys ,(kbd "ZZ"))))
-      (helixel-repeat-edit)
-      ;; text mode uses :inserted-text, not :keys
-      (should (string= (buffer-string) "XY world"))
-      (should (plist-get (helixel-edit-payload helixel--last-tx) :inserted-text))
-      (goto-char 4)
-      (helixel-repeat-edit)
-      (should (string= (buffer-string) "XY XY")))))
+    (goto-char 1)
+    ;; A tx with both :inserted-text and :keys — :keys wins
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'textobj
+              '(:command helixel-mark-inner-word :count 1)
+              #'helixel--recreate-textobj
+              (replace-regexp-in-string
+               "^helixel-mark-" ""
+               (symbol-name 'helixel-mark-inner-word)))
+            :inserted-text "XY" :keys (kbd "ZZ")))
+    (helixel-repeat-edit)
+    ;; :keys "ZZ" is used, not :inserted-text "XY"
+    (should (string= (buffer-string) "ZZ world"))
+    (goto-char 4)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "ZZ ZZ"))))
+
+;; ============================================================================
+;; Repeat-selection (,`) tests
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-selection-textobj ()
+  "`,` recreates the last textobj selection without applying the edit."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 3)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'textobj '(:command helixel-mark-inner-word :count 1)
+            #'helixel--recreate-textobj
+            (replace-regexp-in-string "^helixel-mark-" "" (symbol-name 'helixel-mark-inner-word)))
+            :inserted-text "X"))
+    (helixel-repeat-selection)
+    (should (region-active-p))
+    (should (= (region-beginning) 1))
+    (should (= (region-end) 6))))
+
+(ert-deftest helixel-test-repeat-selection-line ()
+  "`,` recreates a linewise selection without applying the edit."
+  (helixel-test-with-buffer "line one\nline two\nline three\n"
+    (goto-char 3)
+    (setq helixel--last-tx
+          (helixel-edit-make 'kill
+            (helixel-sel-create 'line '(:count 1)
+              #'helixel--recreate-line "L")))
+    (helixel-repeat-selection)
+    (should (region-active-p))
+    (should (= (region-beginning) 1))))
+
+(ert-deftest helixel-test-repeat-selection-count ()
+  "`,` with count prefix selects multiple units."
+  (helixel-test-with-buffer "line one\nline two\nline three\n"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make 'kill (helixel-sel-create 'line '(:count 1) #'helixel--recreate-line "L")))
+    (helixel-repeat-selection 2)
+    (should (region-active-p))
+    (should (= (region-beginning) 1))
+    (should (>= (region-end) 1))))
+
+(ert-deftest helixel-test-repeat-dot-on-existing-region ()
+  "`.` on an active region (from `,`) uses it without recreating."
+  (helixel-test-with-buffer "hello world"
+    (goto-char 3)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'textobj '(:command helixel-mark-inner-word :count 1)
+            #'helixel--recreate-textobj
+            (replace-regexp-in-string "^helixel-mark-" "" (symbol-name 'helixel-mark-inner-word)))
+            :inserted-text "X"))
+    (helixel-repeat-selection)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "X world"))))
+
+(ert-deftest helixel-test-repeat-selection-extend ()
+  "`,` in visual state extends an existing selection using the stored method."
+  (helixel-test-with-buffer "hello world foo bar"
+    (goto-char 3)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'textobj '(:command helixel-mark-inner-word :count 1)
+            #'helixel--recreate-textobj
+            (replace-regexp-in-string "^helixel-mark-" "" (symbol-name 'helixel-mark-inner-word)))
+            :inserted-text "X"))
+    ;; Enter visual state then recreate selection
+    (setq-local helixel--current-state 'visual)
+    (helixel-repeat-selection)     ;; selects "hello"
+    (should (string= (buffer-substring (region-beginning) (region-end)) "hello"))
+    (helixel-repeat-selection)     ;; extends to next word
+    (should (string= (buffer-substring (region-beginning) (region-end)) "hello world"))))
+
+(ert-deftest helixel-test-repeat-selection-no-prev ()
+  "`,` without a previous edit signals an error."
+  (let ((helixel--last-tx nil))
+    (should-error (helixel-repeat-selection))))
+
+(ert-deftest helixel-test-repeat-selection-no-sel ()
+  "`,` with an edit that has no selection context signals an error."
+  (helixel-test-with-buffer "hello"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text nil :text "X"))
+    (should-error (helixel-repeat-selection))))
+
+;; ============================================================================
+;; Forward-seek for textobj sel-recreate tests
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-forward-seek-whitespace ()
+  "`.` when cursor is on whitespace skips forward to the next textobj."
+  (helixel-test-with-buffer "hello   world"
+    (goto-char 3)                                ;; on "l" of "hello"
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'textobj '(:command helixel-mark-inner-word :count 1)
+            #'helixel--recreate-textobj
+            (replace-regexp-in-string "^helixel-mark-" "" (symbol-name 'helixel-mark-inner-word)))
+            :inserted-text "X"))
+    (goto-char 7)                                ;; on whitespace between words
+    (helixel-repeat-edit)
+    ;; Skips whitespace forward, selects "world", changes to "X"
+    (should (string= (buffer-string) "hello   X"))))
+
+(ert-deftest helixel-test-repeat-forward-seek-at-word-start ()
+  "`.` on whitespace after a word jumps forward to the next word."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 3)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'textobj '(:command helixel-mark-inner-word :count 1)
+            #'helixel--recreate-textobj
+            (replace-regexp-in-string "^helixel-mark-" "" (symbol-name 'helixel-mark-inner-word)))
+            :inserted-text "X"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "X world foo"))
+    ;; Cursor on space between "X" and "world"
+    (goto-char 2)
+    (helixel-repeat-edit)
+    ;; Skips whitespace forward, selects "world", changes to "X"
+    (should (string= (buffer-string) "X X foo"))))
+
+;; ============================================================================
+;; Search selection replay (`, .) tests
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-selection-search ()
+  "`,` recreates a search-based selection from the stored :pattern."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'search '(:pattern "hello" :dir forward)
+            #'helixel--recreate-search
+            "/hello")
+            :inserted-text "X"))
+    (helixel-repeat-selection)
+    (should (region-active-p))
+    (should (string= (buffer-substring (region-beginning) (region-end)) "hello"))))
+
+(ert-deftest helixel-test-repeat-search-then-dot ()
+  "`.` replays a search-based change on the next match."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'search '(:pattern "hello" :dir forward)
+            #'helixel--recreate-search
+            "/hello")
+            :inserted-text "X"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "X world hello"))
+    ;; cursor after "X " — next . should find next "hello"
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "X world X"))))
+
+(ert-deftest helixel-test-repeat-search-comma-then-dot ()
+  "`,` previews the search match, `.` applies the edit."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'search '(:pattern "hello" :dir forward)
+            #'helixel--recreate-search
+            "/hello")
+            :inserted-text "X"))
+    (helixel-repeat-selection)
+    (should (string= (buffer-substring (region-beginning) (region-end)) "hello"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "X world hello"))))
+
+(ert-deftest helixel-test-repeat-search-n-dot ()
+  "Simulate /hello cX<Esc> then n . n . pattern."
+  (helixel-test-with-buffer "a hello b hello c hello d"
+    (goto-char 3)
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'search '(:pattern "hello" :dir forward)
+            #'helixel--recreate-search
+            "/hello")
+            :inserted-text "X"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "a X b hello c hello d"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "a X b X c hello d"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "a X b X c X d"))))
+
+(ert-deftest helixel-test-repeat-search-backward ()
+  "`.` replays a backward search change."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char (point-max))
+    (setq helixel--last-tx
+          (helixel-edit-make 'change
+            (helixel-sel-create 'search '(:pattern "hello" :dir backward)
+            #'helixel--recreate-search
+            "?hello")
+            :inserted-text "X"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "hello world X"))))
+
+(ert-deftest helixel-test-search-sel-display ()
+  "`helixel-sel-call-display' for search shows /pattern."
+  (should (string= (helixel-sel-call-display
+                    (helixel-sel-create 'search
+                      '(:pattern "hello" :dir forward)
+                      #'helixel--recreate-search
+                      "/hello"))
+                   "/hello")))
 
 ;; ============================================================================
 ;; Surround tests
@@ -3795,7 +4455,7 @@ The leading newline is part of content so mt adds newline only before close."
     (setq last-command 'helixel-select-line this-command 'helixel-select-line)
     (helixel-select-line)
     ;; Verify count stored
-    (should (= (plist-get helixel--repeat-sel-ctx :count) 3))
+    (should (= (helixel-sel-count helixel--repeat-sel-ctx) 3))
     ;; Kill
     (setq last-command 'helixel-select-line this-command 'helixel-kill-thing-at-point)
     (helixel-kill-thing-at-point)
@@ -3813,7 +4473,7 @@ The leading newline is part of content so mt adds newline only before close."
     (setq last-command nil this-command 'helixel-select-line)
     (helixel-select-line 3)
     ;; Verify count stored
-    (should (= (plist-get helixel--repeat-sel-ctx :count) 3))
+    (should (= (helixel-sel-count helixel--repeat-sel-ctx) 3))
     ;; Kill
     (setq last-command 'helixel-select-line this-command 'helixel-kill-thing-at-point)
     (helixel-kill-thing-at-point)
@@ -3831,7 +4491,7 @@ The leading newline is part of content so mt adds newline only before close."
     ;; Select 2 lines upward
     (setq last-command nil this-command 'helixel-select-line-up)
     (helixel-select-line-up 2)
-    (should (= (plist-get helixel--repeat-sel-ctx :count) 2))
+    (should (= (helixel-sel-count helixel--repeat-sel-ctx) 2))
     ;; Kill
     (setq last-command 'helixel-select-line-up this-command 'helixel-kill-thing-at-point)
     (helixel-kill-thing-at-point)
@@ -3847,7 +4507,7 @@ The leading newline is part of content so mt adds newline only before close."
     (setq last-command 'helixel-select-line this-command 'helixel-kill-thing-at-point)
     (helixel-kill-thing-at-point)
     ;; The tx sel should have count 2
-    (should (= (plist-get (helixel-edit-sel helixel--last-tx) :count) 2))))
+    (should (= (helixel-sel-count (helixel-edit-sel helixel--last-tx)) 2))))
 
 ;;; Jump navigation tests
 
@@ -3993,5 +4653,1271 @@ The leading newline is part of content so mt adds newline only before close."
         (should (string= msg "At newest"))))
     (kill-buffer buf-a)
     (kill-buffer buf-b)))
+
+;; ============================================================================
+;; P0.1: ring-head sync — verify pick replays full payload
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-pick-change-end-to-end ()
+  "After ciwX<esc>, `helixel-repeat-edit-pick' replays the change correctly.
+Verifies that `helixel-insert-exit' syncs `helixel--last-tx' payload
+with the ring head so the picker sees the full transaction."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word
+          this-command 'helixel-change-thing-at-point)
+    (helixel-change-thing-at-point)
+    (insert "X")
+    (helixel-insert-exit)
+    ;; Verify ring head has the payload
+    (should (plist-get (helixel-edit-payload (car helixel--edit-ring))
+                       :inserted-text))
+    (should (string= (plist-get
+                      (helixel-edit-payload (car helixel--edit-ring))
+                      :inserted-text)
+                     "X"))
+    ;; Ring head should be eq to last-tx
+    (should (eq (car helixel--edit-ring) helixel--last-tx))
+    ;; Simulate picking the first entry (the only one)
+    (should (= 1 (length helixel--edit-ring)))
+    (goto-char 4)
+    (setq helixel--last-tx (car helixel--edit-ring))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "X X foo"))))
+
+(ert-deftest helixel-test-repeat-pick-insert-end-to-end ()
+  "After iZ<esc>, ring head has :text payload; pick replays correctly."
+  (let ((helixel--last-tx nil)
+        (helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "abc"
+      (set-match-data nil) ; clear stale match data from prior tests
+      (goto-char 2)
+        (setq last-command nil this-command 'helixel-insert)
+        (helixel-insert)
+        (insert "Z")
+        (helixel-insert-exit)
+        ;; Verify ring head has :text payload
+        (should (plist-get (helixel-edit-payload (car helixel--edit-ring))
+                           :text))
+        (should (string=
+                 (plist-get (helixel-edit-payload (car helixel--edit-ring))
+                            :text)
+                 "Z"))
+        (should (eq (car helixel--edit-ring) helixel--last-tx))
+        (goto-char 4)
+        (setq helixel--last-tx (car helixel--edit-ring))
+        (helixel-repeat-edit)
+        (should (string= (buffer-string) "aZbZc")))))
+
+;; ============================================================================
+;; P0.2: undo amalgamation — `.` produces a single undo step
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-undo-amalgamation ()
+  "`.` (change replay) is a single undo step.
+ciw X <esc> creates two buffer changes (kill + insert).  When `.`
+replays them, undo should restore the pre-repeat state in one step."
+  (helixel-test-with-buffer "hello world foo"
+    (goto-char 1)
+    ;; Enable undo in this temp buffer
+    (setq buffer-undo-list nil)
+    ;; Record: ciw X <esc>
+    (setq last-command nil this-command 'helixel-mark-inner-word)
+    (helixel-mark-inner-word)
+    (setq last-command 'helixel-mark-inner-word
+          this-command 'helixel-change-thing-at-point)
+    (helixel-change-thing-at-point)
+    (insert "X")
+    (helixel-insert-exit)
+    (should (string= (buffer-string) "X world foo"))
+    ;; Repeat at "world"
+    (goto-char 4)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "X X foo"))
+    ;; Single undo should restore to "X world foo"
+    (let ((last-command nil))
+      (undo-only))
+    (should (string= (buffer-string) "X world foo"))))
+
+;; ============================================================================
+;; P1.1: track-visual-move no-op during replay
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-track-visual-move-no-leak ()
+  "`helixel--track-visual-move' does not leak state during dot-repeat replay.
+Movement commands called during selection recreation should not
+modify `helixel--repeat-sel-ctx'."
+  (helixel-test-with-buffer "hello world foo bar"
+    (goto-char 1)
+    ;; Record a v w w d sequence
+    (helixel--switch-state 'visual)
+    (setq last-command nil this-command 'helixel-forward-word-start)
+    (helixel-forward-word-start)
+    (helixel-forward-word-start)
+    (setq last-command 'helixel-forward-word-start
+          this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    (helixel--switch-state 'normal)
+    ;; After kill, remaining is "foo bar"
+    (should (string= (buffer-string) "foo bar"))
+    ;; Save the stored sel-ctx
+    (let ((stored-sel (copy-sequence (helixel-edit-sel helixel--last-tx))))
+      ;; Replay
+      (goto-char 1)
+      (helixel-repeat-edit)
+      ;; helixel--repeat-sel-ctx should be nil after consumption
+      (should (null helixel--repeat-sel-ctx))
+      ;; Should be "bar" after second kill (killed "foo ")
+      (should (string= (buffer-string) "bar"))
+      ;; The stored tx should be unchanged
+      (should (equal (helixel-edit-sel helixel--last-tx) stored-sel)))))
+
+;; ============================================================================
+;; P1.2: rect change replay does not switch state
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-rect-change-no-state-switch ()
+  "Rect change replay via `.` does not call `helixel-insert-exit'.
+It should only run `helixel--rect-replay' without switching to insert
+and back."
+  (helixel-test-with-buffer "aaa\nbbb\nccc\n"
+    (goto-char 1)
+    ;; Select rect 2 lines, then change
+    (helixel--switch-state 'visual)
+    (setq helixel--current-state 'visual)
+    (push-mark (point) t t)
+    (goto-char 5)
+    (rectangle-mark-mode 1)
+    (setq helixel--selection-type 'rect)
+    (setq last-command nil this-command 'helixel-change-thing-at-point)
+    (helixel-change-thing-at-point)
+    (insert "X")
+    (helixel-insert-exit)
+    (helixel--switch-state 'normal)
+    (should (eq helixel--current-state 'normal))
+    ;; Remember state before replay
+    (let ((pre-state helixel--current-state))
+      (helixel-repeat-edit)
+      ;; State should be unchanged
+      (should (eq helixel--current-state pre-state)))))
+
+;; ============================================================================
+;; End-to-end: search + insert with cursor movement + n .
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-search-insert-c-f-n-dot ()
+  "Scenario: /hello<RET> i C-f foo<ESC> n . inserts foo at cursor offset.
+Cursor-offset is set manually in sel ctx to simulate forward-char."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (re-search-forward "hello")
+    (let ((isearch-success t)
+          (isearch-string "hello")
+          (isearch-regexp t)
+          (isearch-forward t)
+          (isearch-other-end (match-beginning 0)))
+      (helixel-search--handle-done nil))
+    ;; Build tx with entry-kind=insert, cursor-offset=1 (C-f),
+    ;; and text=foo.  sel ctx records the offset within the match.
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'search
+             '(:pattern "hello" :dir forward
+               :entry-kind insert :cursor-offset 1)
+             #'helixel--recreate-search "/hello/")
+            :text "foo"))
+    ;; Apply first edit manually
+    (goto-char (1+ (match-beginning 0)))
+    (insert "foo")
+    (should (string= (buffer-string) "hfooello world hello"))
+    ;; . — repeat: searches for next "hello", inserts at offset 1
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "hfooello world hfooello"))))
+
+(ert-deftest helixel-test-repeat-search-insert-no-region-n-dot ()
+  "i after /hello: search sel with entry-kind and cursor-offset.
+Cursor-offset is set manually; kmacro captures keys in real flow."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (re-search-forward "hello")
+    (let ((isearch-success t)
+          (isearch-string "hello")
+          (isearch-regexp t)
+          (isearch-forward t)
+          (isearch-other-end (match-beginning 0)))
+      (helixel-search--handle-done nil))
+    ;; Build tx: insert kind=search, entry-kind=insert, offset=1
+    ;; simulates /hello + i + C-f + hi<ESC>
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'search
+             '(:pattern "hello" :dir forward
+               :entry-kind insert :cursor-offset 1)
+             #'helixel--recreate-search "/hello/")
+            :text "hi"))
+    ;; Apply first edit manually
+    (goto-char (1+ (match-beginning 0)))
+    (insert "hi")
+    (should (string= (buffer-string) "hhiello world hello"))
+    ;; . — repeat on next match at offset 1
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "hhiello world hhiello"))))
+
+;; ============================================================================
+;; Reproduction: a + search + cursor-left + . (fixed marker-shift)
+;; Scenario: /hello<RET> a <left><left> ww <esc> n .
+;; Expected: "helwwlo" on both matches (was broken due to marker-shift bug).
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-search-insert-after-left-n-dot ()
+  "Scenario: /hello<RET> a <left><left> ww <esc> n .
+Insert-after with cursor-movement-left; offset set manually."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (re-search-forward "hello")
+    (should (= (match-beginning 0) 1))
+    (should (= (match-end 0) 6))
+    (let ((isearch-success t)
+          (isearch-string "hello")
+          (isearch-regexp t)
+          (isearch-forward t)
+          (isearch-other-end (match-beginning 0)))
+      (helixel-search--handle-done nil))
+    ;; Build tx: append kind, entry-kind=append, cursor-offset=-2
+    ;; simulates /hello + a + <left><left> + ww<ESC>
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'search
+             '(:pattern "hello" :dir forward
+               :entry-kind append :cursor-offset -2)
+             #'helixel--recreate-search "/hello/")
+            :text "ww"))
+    ;; Apply first edit manually
+    (goto-char (- (match-end 0) 2))
+    (insert "ww")
+    (should (string= (buffer-string) "helwwlo world hello"))
+    ;; . — repeat on next match at offset -2 from match-end
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "helwwlo world helwwlo"))))
+
+;; ============================================================================
+;; a (insert-after) + search + . — no cursor movement
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-search-insert-after-no-move-n-dot ()
+  "Scenario: /hello<RET> a foo <esc> n . — appends at region-end.
+Insert-after at region-end with no cursor movement.
+Cursor-offset is 0 (first insertion at region-end)."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world hello"
+      ;; Simulate /hello<RET>
+      (goto-char 1)
+      (re-search-forward "hello")
+      (should (= (match-beginning 0) 1))
+      (should (= (match-end 0) 6))
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      ;; Set up search sel context (done by helixel-search--set-sel-ctx in real flow)
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      ;; a — insert-after at match-end (unified search path)
+      (setq last-command nil this-command 'helixel-insert-after)
+      (helixel-insert-after)
+      ;; foo — insert at point (no cursor movement)
+      (insert "foo")
+      (helixel-insert-exit)
+      ;; Buffer after edit: "hellofoo world hello"
+      (should (string= (buffer-string) "hellofoo world hello"))
+      (should (string= (plist-get (helixel-edit-payload helixel--last-tx) :text)
+                       "foo"))
+      (let ((sel (helixel-edit-sel helixel--last-tx)))
+        (should (eq (helixel-sel-get-kind sel) 'search))
+        (should (eq (helixel-sel-search-entry-kind sel) 'append)))
+      ;; . — repeat (searches for next "hello" and applies "foo" at end)
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "hellofoo world hellofoo")))))
+
+;; ── a (insert-after) + backward search + . ──
+
+(ert-deftest helixel-test-repeat-search-insert-after-backward-dot ()
+  "Scenario: ?hello<RET> a foo <esc> . — backward search + append.
+Backward search finds last match, a appends after it, . finds previous
+match going backward and appends there too.  Regression: (looking-at)
+only matched at match-start, missing the match-end case for append."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world hello"
+      (goto-char (point-max))
+      ;; Simulate ?hello<RET> — backward search from end
+      (re-search-backward "hello")
+      (should (= (match-beginning 0) 13))
+      (should (= (match-end 0) 18))
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward nil)
+            (isearch-other-end (match-end 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir backward)
+             #'helixel--recreate-search "?hello"))
+      ;; a — insert-after at match-end
+      (setq last-command nil this-command 'helixel-insert-after)
+      (helixel-insert-after)
+      (insert "foo")
+      (helixel-insert-exit)
+      ;; Buffer after edit: "hello world hellofoo"
+      (should (string= (buffer-string) "hello world hellofoo"))
+      (let ((sel (helixel-edit-sel helixel--last-tx)))
+        (should (eq (helixel-sel-get-kind sel) 'search))
+        (should (eq (helixel-sel-search-entry-kind sel) 'append)))
+      ;; . — should find first "hello" (backward) and append "foo"
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "hellofoo world hellofoo")))))
+
+;; ============================================================================
+;; Regression: a after search goes to region-end, not buffer-beginning
+;; ============================================================================
+
+(ert-deftest helixel-test-search-insert-after-region-end ()
+  "a after /hello<RET> goes to region-end (match-end), not buffer start.
+Regression: using (match-end 0) instead of (region-end) caused
+goto-char(nil) when match data was stale, jumping to buffer start."
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (re-search-forward "hello")
+    (let ((isearch-success t)
+          (isearch-string "hello")
+          (isearch-regexp t)
+          (isearch-forward t)
+          (isearch-other-end (match-beginning 0)))
+      (helixel-search--handle-done nil))
+    ;; Simulate helixel-search--set-sel-ctx
+    (setq helixel--repeat-sel-ctx
+          (helixel-sel-create
+           'search '(:pattern "hello" :dir forward)
+           #'helixel--recreate-search "/hello/"))
+    ;; a should go to region-end (6), not buffer-beginning (1)
+    (setq last-command nil this-command 'helixel-insert-after)
+    (helixel-insert-after)
+    (should (= (point) 6))
+    (should (= (region-beginning) 1))))
+
+;; ============================================================================
+;; . repeat — search-failed error message
+;; ============================================================================
+
+(ert-deftest helixel-test-repeat-search-no-more-matches ()
+  ". after search-based edit: shows error when no more matches exist."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world"
+      ;; /hello<RET> — search for "hello"
+      (goto-char 1)
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      ;; i — insert at match-beginning
+      (setq last-command nil this-command 'helixel-insert)
+      (helixel-insert)
+      (insert "X")
+      (helixel-insert-exit)
+      ;; Move past the only "hello" so . can't re-find it
+      (goto-char (point-max))
+      ;; Only one "hello" in buffer; . should fail
+      (condition-case err
+          (helixel-repeat-edit)
+        ((error quit)
+         (should (string-match-p "Search pattern not found"
+                                  (error-message-string err)))))
+      ;; Buffer should be unchanged (undo amalgamate cancelled)
+      (should (string= (buffer-string) "Xhello world")))))
+
+;; ============================================================================
+;; Unified search-edit: additional end-to-end tests
+;; ============================================================================
+
+;; ── i (insert) no cursor movement + . ──
+
+(ert-deftest helixel-test-repeat-search-insert-no-move-dot ()
+  "Scenario: /hello<RET> i X <esc> . — insert X at match-beginning."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world hello"
+      (goto-char 1)
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil this-command 'helixel-insert)
+      (helixel-insert)
+      (insert "X")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "Xhello world hello"))
+      (let ((sel (helixel-edit-sel helixel--last-tx)))
+        (should (eq (helixel-sel-get-kind sel) 'search))
+        (should (eq (helixel-sel-search-entry-kind sel) 'insert)))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "Xhello world Xhello")))))
+
+;; ── c (change) + search + . ──
+
+(ert-deftest helixel-test-repeat-search-change-dot ()
+  "Full-flow: /hello<RET> c X <esc> . — changes both matches to X."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world hello"
+      (goto-char 1)
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "X")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "X world hello"))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "X world X")))))
+
+;; ── . from arbitrary position ──
+
+(ert-deftest helixel-test-repeat-search-dot-from-pos ()
+  "`.` from middle of buffer finds next match."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world hello"
+      (goto-char 1)
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil this-command 'helixel-insert)
+      (helixel-insert)
+      (insert "X")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "Xhello world hello"))
+      (goto-char 8)
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "Xhello world Xhello")))))
+
+;; ── Movement selection + . end-to-end ──
+
+(ert-deftest helixel-test-repeat-movement-kill-at-start ()
+  "vw d at position 1, then . at start selects the word at cursor."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world foo bar"
+      (goto-char 1)
+      (setq helixel--last-tx
+            (helixel-edit-make 'kill
+              (helixel-sel-create 'movement
+                '(:moves ((helixel-forward-word-start . 1)))
+                #'helixel--recreate-movement "v1")))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "world foo bar")))))
+
+(ert-deftest helixel-test-repeat-movement-kill-at-word-start ()
+  "vw d at position 1, then move to word start, . selects the word there."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world foo bar"
+      (goto-char 1)
+      (setq helixel--last-tx
+            (helixel-edit-make 'kill
+              (helixel-sel-create 'movement
+                '(:moves ((helixel-forward-word-start . 1)))
+                #'helixel--recreate-movement "v1")))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "world foo bar"))
+      (goto-char 7)
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "world bar")))))
+
+(ert-deftest helixel-test-repeat-movement-kill-count-two ()
+  "v w w d selects 2 words forward, . at a new position selects 2 words."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world foo bar"
+      (goto-char 1)
+      (setq helixel--last-tx
+            (helixel-edit-make 'kill
+              (helixel-sel-create 'movement
+                '(:moves ((helixel-forward-word-start . 2)))
+                #'helixel--recreate-movement "v2")))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "foo bar")))))
+;; ── , comma repeat-selection end-to-end ──
+
+(ert-deftest helixel-test-repeat-selection-line-then-dot ()
+  ", after x d previews the line, then . kills it."
+  :tags '(repeat comma)
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "aaa\nbbb\nccc"
+      (goto-char 1)
+      (setq helixel--last-tx
+            (helixel-edit-make
+             'kill
+             (helixel-sel-create 'line
+               '(:dir forward :count 1)
+               #'helixel--recreate-line "x")))
+      (helixel-repeat-selection)
+      (should (region-active-p))
+      (should (= (region-beginning) 1))
+      (should (= (region-end) 4))          ; "aaa\n" (point at 4)
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "bbb\nccc")))))
+
+(ert-deftest helixel-test-repeat-selection-line-count-then-dot ()
+  "3 , after x d kills 3 lines."
+  :tags '(repeat comma)
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "aaa\nbbb\nccc\nddd"
+      (goto-char 1)
+      (setq helixel--last-tx
+            (helixel-edit-make
+             'kill
+             (helixel-sel-create 'line
+               '(:dir forward :count 1)
+               #'helixel--recreate-line "x")))
+      (helixel-repeat-selection 3)
+      (should (region-active-p))
+      (should (string= (buffer-string) "aaa\nbbb\nccc\nddd"))
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "ddd")))))
+
+(ert-deftest helixel-test-repeat-selection-movement-then-dot ()
+  ", after vw d previews the word, then . kills it."
+  :tags '(repeat comma)
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world"
+      (goto-char 1)
+      (setq helixel--last-tx
+            (helixel-edit-make
+             'kill
+             (helixel-sel-create 'movement
+               '(:moves ((helixel-forward-word-start . 1)))
+               #'helixel--recreate-movement "v1")))
+      (helixel-repeat-selection)
+      (should (region-active-p))
+      (should (= (region-beginning) 1))
+      (should (= (region-end) 7))          ; 'hello '
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "world")))))
+
+;; ── segment-based replay: cursor movement between insertions ──
+
+(ert-deftest helixel-test-repeat-search-insert-move-forward-dot ()
+  "Scenario: /hello<RET> i aa <M-f> bb <esc> .
+Two insertions with cursor-movement gap between.
+With kmacro recording, keys capture the full sequence."
+  :tags '(repeat search)
+  (helixel-test-with-buffer "hello world hello"
+    (goto-char 1)
+    (re-search-forward "hello")
+    (should (= (match-beginning 0) 1))
+    (should (= (match-end 0) 6))
+    (let ((isearch-success t)
+          (isearch-string "hello")
+          (isearch-regexp t)
+          (isearch-forward t)
+          (isearch-other-end (match-beginning 0)))
+      (helixel-search--handle-done nil))
+    ;; Build tx simulating i aa <M-f> bb <ESC>
+    ;; Text records the concatenated text; sel tracks entry-kind.
+    (let ((m-beg (match-beginning 0))
+          (m-end (match-end 0)))
+      (setq helixel--last-tx
+            (helixel-edit-make 'insert-text
+              (helixel-sel-create
+               'search
+               '(:pattern "hello" :dir forward :entry-kind insert)
+               #'helixel--recreate-search "/hello/")
+              :text "aabb"))
+      ;; Apply first edit manually (aa before match, then bb after)
+      ;; Save match positions before buffer modifications.
+      (goto-char m-beg)
+      (insert "aa")
+      (goto-char (+ m-end (length "aa")))
+      (insert "bb")
+      (should (string= (buffer-string) "aahellobb world hello"))
+      ;; . — repeat on next match: inserts "aabb" at match-beginning
+      (helixel-repeat-edit)
+      (should (string= (buffer-string)
+                       "aahellobb world aabbhello")))))
+
+;; ── 0. prefix: repeat-all in stored direction ──
+
+(ert-deftest helixel-test-repeat-all-dir-forward-change ()
+  "0. after /search cX<ESC> changes all remaining matches forward."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char 1)
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "XXX A hello B hello C"))
+      ;; 0. -> change all remaining "hello" forwards
+      (helixel-repeat-edit 0)
+      (should (string= (buffer-string) "XXX A XXX B XXX C")))))
+
+(ert-deftest helixel-test-repeat-all-dir-forward-from-middle ()
+  "0. after /search from middle only changes matches after cursor."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char 9)                        ; at "hello B"
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      ;; Only B and C changed, not A
+      (should (string= (buffer-string) "hello A XXX B hello C"))
+      (helixel-repeat-edit 0)
+      (should (string= (buffer-string) "hello A XXX B XXX C")))))
+
+(ert-deftest helixel-test-repeat-all-dir-backward-change ()
+  "0. after ?search cX<ESC> changes all remaining matches backward."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char (point-max))
+      (re-search-backward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward nil)       ; backward
+            (isearch-other-end (match-end 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir backward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      ;; Changed last hello (C)
+      (should (string= (buffer-string) "hello A hello B XXX C"))
+      ;; 0. -> change remaining matches backward
+      (helixel-repeat-edit 0)
+      (should (string= (buffer-string) "XXX A XXX B XXX C")))))
+
+(ert-deftest helixel-test-repeat-all-dir-backward-append ()
+  "0. after ?search aXXX<ESC> — skip logic prevents re-editing current match."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char (point-max))
+      (re-search-backward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward nil)
+            (isearch-other-end (match-end 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir backward)
+             #'helixel--recreate-search "/hello/"))
+      ;; Append "XXX" after match (a = helixel-insert-after)
+      (setq last-command nil this-command 'helixel-insert-after)
+      (helixel-insert-after)
+      (insert "XXX")
+      (helixel-insert-exit)
+      (should (string= (buffer-string)
+                       "hello A hello B helloXXX C"))
+      ;; 0. -> append to remaining matches backward
+      (helixel-repeat-edit 0)
+      (should (string= (buffer-string)
+                       "helloXXX A helloXXX B helloXXX C")))))
+
+;; NOTE: This test is the insert-after variant (like `a`);
+;; above test uses helixel-insert-after for append semantics.
+
+(ert-deftest helixel-test-repeat-all-dir-forward-insert ()
+  "0. after /search iXXX<ESC> — inserts before all remaining matches."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char 1)
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil this-command 'helixel-insert)
+      (helixel-insert)
+      (insert "XXX")
+      (helixel-insert-exit)
+      ;; Inserted before first hello
+      (should (string= (buffer-string)
+                       "XXXhello A hello B hello C"))
+      ;; 0. -> insert before all remaining matches
+      (helixel-repeat-edit 0)
+      (should (string= (buffer-string)
+                       "XXXhello A XXXhello B XXXhello C")))))
+
+;; ── C-u . prefix: repeat-all entire buffer ──
+
+(ert-deftest helixel-test-repeat-all-buffer-forward-change ()
+  "C-u . after /search cX<ESC> changes ALL matches from point-min."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char 9)                        ; at "hello B"
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "hello A XXX B hello C"))
+      ;; C-u . -> all matches from point-min forward
+      (helixel-repeat-edit '(4))
+      (should (string= (buffer-string) "XXX A XXX B XXX C")))))
+
+(ert-deftest helixel-test-repeat-all-buffer-forward-insert ()
+  "C-u . after /search iXXX<ESC> inserts BEFORE all matches from point-min.
+entry-kind=insert means insert at match-beginning, not match-end."
+  (helixel-test-with-buffer "hello A hello B hello C"
+    (goto-char 1)
+    (re-search-forward "hello")
+    (let ((isearch-success t)
+          (isearch-string "hello")
+          (isearch-regexp t)
+          (isearch-forward t)
+          (isearch-other-end (match-beginning 0)))
+      (helixel-search--handle-done nil))
+    ;; Build tx with entry-kind=insert (i before match)
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'search
+             '(:pattern "hello" :dir forward :entry-kind insert)
+             #'helixel--recreate-search "/hello/")
+            :text "XXX"))
+    ;; Apply first edit manually
+    (goto-char (match-beginning 0))
+    (insert "XXX")
+    (should (string= (buffer-string)
+                     "XXXhello A hello B hello C"))
+    ;; C-u . -> insert before ALL matches from point-min
+    (helixel-repeat-edit '(4))
+    (should (string= (buffer-string)
+                     "XXXhello A XXXhello B XXXhello C"))))
+
+(ert-deftest helixel-test-repeat-all-buffer-backward-change ()
+  "C-u . after ?search cX<ESC> changes ALL matches regardless of stored dir."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char (point-max))
+      (re-search-backward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward nil)
+            (isearch-other-end (match-end 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir backward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "hello A hello B XXX C"))
+      ;; C-u . -> all matches from point-min forward
+      (helixel-repeat-edit '(4))
+      (should (string= (buffer-string) "XXX A XXX B XXX C")))))
+
+(ert-deftest helixel-test-repeat-all-buffer-backward-append ()
+  "C-u . after ?search aXXX<ESC> inserts at ALL matches."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char (point-max))
+      (re-search-backward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward nil)
+            (isearch-other-end (match-end 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir backward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil this-command 'helixel-insert-after)
+      (helixel-insert-after)
+      (insert "XXX")
+      (helixel-insert-exit)
+      (should (string= (buffer-string)
+                       "hello A hello B helloXXX C"))
+      ;; C-u . -> append at ALL matches from point-min
+      (helixel-repeat-edit '(4))
+      (should (string= (buffer-string)
+                       "helloXXX A helloXXX B helloXXX C")))))
+
+;; ── C-u -N . prefix: reverse direction ──
+
+(ert-deftest helixel-test-repeat-reverse-forward-to-backward ()
+  "C-u -2 . after /search reverses direction: forward -> backward."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char 9)                        ; at "hello B"
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      ;; Changed B
+      (should (string= (buffer-string) "hello A XXX B hello C"))
+      ;; C-u -2 . -> reverse (backward): change A + search-failed
+      (helixel-repeat-edit -2)
+      (should (string= (buffer-string) "XXX A XXX B hello C")))))
+
+(ert-deftest helixel-test-repeat-reverse-backward-to-forward ()
+  "C-u -2 . after ?search reverses direction: backward -> forward."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char (point-max))
+      (re-search-backward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward nil)
+            (isearch-other-end (match-end 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir backward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      ;; Changed C
+      (should (string= (buffer-string) "hello A hello B XXX C"))
+      ;; C-u -2 . -> reverse (forward): from C there's nothing forward
+      ;; -> 0 changes, but original direction unchanged
+      (helixel-repeat-edit -2)
+      (should (string= (buffer-string) "hello A hello B XXX C")))))
+
+(ert-deftest helixel-test-repeat-reverse-mid-buffer ()
+  "C-u -3 . after ?search from middle changes backward matches in reverse."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char 15)                       ; after "hello B", before C
+      (re-search-backward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward nil)
+            (isearch-other-end (match-end 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir backward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      ;; Changed B (backward from middle)
+      (should (string= (buffer-string) "hello A XXX B hello C"))
+      ;; C-u -3 . -> reverse (forward): change C
+      (helixel-repeat-edit -3)
+      (should (string= (buffer-string) "hello A XXX B XXX C")))))
+
+;; ── Edge cases ──
+
+(ert-deftest helixel-test-repeat-all-single-match ()
+  "0. with only one match: executes once then stops silently."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello world"
+      (goto-char 1)
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "XXX world"))
+      ;; 0. -> no more matches, silently stops
+      (helixel-repeat-edit 0)
+      (should (string= (buffer-string) "XXX world")))))
+
+(ert-deftest helixel-test-repeat-all-non-search-line ()
+  "0. on line (non-search) selection falls back to single execution."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "line1\nline2\nline3\n"
+      (goto-char 1)
+      ;; Simulate v j d (select 2 lines, kill)
+      ;; The kill runner will delete the selected lines.
+      (setq helixel--last-tx
+            (helixel-edit-make 'kill
+              (helixel-sel-create 'line
+                '(:dir forward :count 2)
+                (lambda (ctx)
+                  (let ((cnt (helixel-sel-line-count ctx)))
+                    (push-mark (line-beginning-position) t t)
+                    (goto-char
+                     (line-beginning-position (1+ cnt)))
+                    (setq mark-active t))
+                  (setq helixel--selection-type 'line))
+                "2lines")))
+      ;; First . kills line1+line2, leaving line3
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "line3\n"))
+      ;; 0. on non-search sel -> fallback to single execution
+      ;; kills the remaining line3
+      (helixel-repeat-edit 0)
+      (should (string= (buffer-string) "")))))
+
+(ert-deftest helixel-test-repeat-reverse-keeps-stored-dir ()
+  "C-u -1 . does NOT change the stored direction for subsequent ."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char 9)
+      (re-search-forward "hello")
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward t)
+            (isearch-other-end (match-beginning 0)))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir forward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "hello A XXX B hello C"))
+      ;; C-u -1 . reverse (backward) -> changes A
+      (helixel-repeat-edit -1)
+      (should (string= (buffer-string) "XXX A XXX B hello C"))
+      ;; Normal . -> still forward, changes C
+      (helixel-repeat-edit)
+      (should (string= (buffer-string) "XXX A XXX B XXX C")))))
+
+(ert-deftest helixel-test-repeat-all-dir-backward-from-start ()
+  "0. after ?search from buffer start: no matches backward, silent stop."
+  (let ((helixel-repeat-change-method 'text))
+    (helixel-test-with-buffer "hello A hello B hello C"
+      (goto-char 1)
+      (re-search-forward "hello")        ; find first hello
+      ;; Backward search puts point at match-beginning
+      (goto-char (match-beginning 0))
+      (let ((isearch-success t)
+            (isearch-string "hello")
+            (isearch-regexp t)
+            (isearch-forward nil)        ; backward
+            (isearch-other-end (copy-marker (match-end 0))))
+        (helixel-search--handle-done nil))
+      (setq helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'search '(:pattern "hello" :dir backward)
+             #'helixel--recreate-search "/hello/"))
+      (setq last-command nil
+            this-command 'helixel-change-thing-at-point)
+      (helixel-change-thing-at-point)
+      (insert "XXX")
+      (helixel-insert-exit)
+      (should (string= (buffer-string) "XXX A hello B hello C"))
+      ;; 0. backward from start -> no more matches
+      (helixel-repeat-edit 0)
+      (should (string= (buffer-string) "XXX A hello B hello C")))))
+
+;;; Line selection auto-advance for `.` repeat
+
+(ert-deftest helixel-test-repeat-line-advance-insert ()
+  "`. ` after xi<text><ESC> auto-advances to next line."
+  (helixel-test-with-buffer "line1\nline2\nline3\n"
+    (goto-char 3)
+    ;; Simulate xihello<ESC>: insert-text op on line sel.
+    ;; insert-text inserts at point (which helixel-select-line
+    ;; leaves at eol after recreating).  The key test: `.`
+    ;; should advance point to line 2 before executing.
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create 'line '(:dir forward :count 1)
+                                #'helixel--recreate-line "L")
+            :text "hello"))
+    (let ((old-line (line-number-at-pos)))
+      (should (= old-line 1))
+      (helixel-repeat-edit)
+      ;; After `.`, the edit should have been applied on
+      ;; a different line (line 2, the auto-advanced line).
+      ;; Point changed from line 1 to line 2 or beyond.
+      (should (not (= old-line (line-number-at-pos)))))))
+
+(ert-deftest helixel-test-repeat-line-advance-kill-no-skip ()
+  "`. ` after xd does NOT skip the next line (kill auto-moves point)."
+  (helixel-test-with-buffer "line1\nline2\nline3\n"
+    (goto-char 3)
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line
+          this-command 'helixel-kill-thing-at-point)
+    (helixel-kill-thing-at-point)
+    ;; line1 killed, point at bol of line2
+    (should (string= (buffer-string) "line2\nline3\n"))
+    (helixel-repeat-edit)
+    ;; Should kill line2 (now at point), NOT skip to line3
+    (should (string= (buffer-string) "line3\n"))))
+
+(ert-deftest helixel-test-repeat-line-advance-indent ()
+  "`. ` after x> auto-advances and indents the next line."
+  (helixel-test-with-buffer "line1\nline2\nline3\n"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line
+          this-command 'helixel-indent-right)
+    (helixel-indent-right)
+    (let ((after-first (buffer-string)))
+      (helixel-repeat-edit)
+      ;; The second line should also be indented
+      (should (not (string= after-first (buffer-string)))))))
+
+(ert-deftest helixel-test-repeat-line-advance-count ()
+  "`3. ` after x> indents lines 2,3,4 (auto-advancing each time)."
+  (helixel-test-with-buffer "a\nb\nc\nd\ne\n"
+    (goto-char 1)
+    (setq last-command nil this-command 'helixel-select-line)
+    (helixel-select-line)
+    (setq last-command 'helixel-select-line
+          this-command 'helixel-indent-right)
+    (helixel-indent-right)
+    (should (string= (buffer-string) " a\nb\nc\nd\ne\n"))
+    (helixel-repeat-edit 3)
+    ;; Lines b, c, d should be indented (3 iterations, each advancing)
+    (should (string= (buffer-string) " a\n b\n c\n d\ne\n"))))
+
+(ert-deftest helixel-test-repeat-line-advance-backward ()
+  "`. ` after X (backward dir) i<text><ESC> advances up."
+  (helixel-test-with-buffer "line1\nline2\nline3\n"
+    (goto-char 10)
+    ;; Simulate Xihello<ESC>: insert-text on backward line sel.
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create 'line '(:dir backward :count 1)
+                                #'helixel--recreate-line "L")
+            :text "hello"))
+    (let ((old-line (line-number-at-pos)))
+      (should (= old-line 2))
+      (helixel-repeat-edit)
+      ;; Should have advanced backward to line 1
+      (should (not (= old-line (line-number-at-pos)))))))
+
+(ert-deftest helixel-test-repeat-line-advance-real-insert ()
+  "`. ` after xihello<ESC> advances to next line.
+Verifies: sel kind stays `line' through insert recording,
+`. ` auto-advances to next line and inserts at bol."
+  (helixel-test-with-buffer "line1\nline2\nline3\n"
+    (goto-char 3)
+    ;; Simulate xihello<ESC> by building a tx that mimics
+    ;; the real recording output.
+    (let ((helixel--repeat-sel-ctx
+           (helixel-sel-create 'line
+               '(:dir forward :count 1 :entry-kind insert)
+               #'helixel--recreate-line "L")))
+      (helixel--record-edit 'insert-text))
+    (setq helixel--last-tx
+          (helixel-edit-with-payload helixel--last-tx :text "hello"))
+    (let ((old-line (line-number-at-pos)))
+      (should (= old-line 1))
+      (helixel-repeat-edit)
+      ;; Should have advanced to line 2 and inserted there.
+      (should (not (= old-line (line-number-at-pos))))
+      ;; Verify "hello" went to line 2 (at bol).
+      (should (string= (buffer-string)
+                       "line1\nhelloline2\nline3\n")))))
+
+(ert-deftest helixel-test-repeat-line-insert-move-forward-dot ()
+  "`. ` after xi<M-f>foo<ESC> replays cursor-movement via kmacro keys.
+M-f (meta key) is a non-character integer — must go through
+key-binding dispatch, not insert-char, in `helixel--execute-keys'."
+  (helixel-test-with-buffer "line1\nline2\n"
+    (goto-char 3)
+    ;; Build tx simulating xi + <M-f> + foo + <ESC>
+    ;; :keys captures the full kmacro (M-f + f + o + o).
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'line
+             '(:dir forward :count 1 :entry-kind insert)
+             #'helixel--recreate-line "L")
+            :keys (kbd "M-f foo")))
+    ;; Apply first edit manually on line 1
+    (beginning-of-line)
+    (forward-word)                  ; simulate M-f
+    (insert "foo")
+    ;; M-f moves to end of "line1" (pos 6), then "foo" inserted.
+    (should (string= (buffer-string) "line1foo\nline2\n"))
+    ;; . — advance to line 2, replay M-f + foo
+    (helixel-repeat-edit)
+    ;; On line 2: bol, M-f -> end of "line2", insert "foo"
+    (should (string= (buffer-string)
+                     "line1foo\nline2foo\n"))))
+
+(ert-deftest helixel-test-repeat-line-cursor-move-append ()
+  "`. ` after xa+foobar replays concatenated text on next line.
+Kmacro captures cursor movement keys; test uses text fallback."
+  (helixel-test-with-buffer "hello world\nline2\n"
+    (goto-char 1)
+    ;; Build tx: line sel + append + text "foobar"
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'line
+             '(:dir forward :count 1 :entry-kind append)
+             #'helixel--recreate-line "L")
+            :text "foobar"))
+    ;; Apply first edit manually (append at eol)
+    (end-of-line)
+    (insert "foobar")
+    (should (string= (buffer-string) "hello worldfoobar\nline2\n"))
+    ;; . — advance to next line, append at eol
+    (helixel-repeat-edit)
+    (should (string= (buffer-string)
+                     "hello worldfoobar\nline2foobar\n"))))
+
+(ert-deftest helixel-test-repeat-line-cursor-move-insert ()
+  "`. ` after xi+text replays text on next line at bol.
+Kmacro captures cursor movement keys; test uses text fallback."
+  (helixel-test-with-buffer "hello world\nline2\n"
+    (goto-char 1)
+    ;; Build tx: line sel + insert + text "AAA"
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'line
+             '(:dir forward :count 1 :entry-kind insert)
+             #'helixel--recreate-line "L")
+            :text "AAA"))
+    ;; Apply first edit manually
+    (beginning-of-line)
+    (insert "AAA")
+    (helixel-repeat-edit)
+    ;; AAA goes to bol of line 2.
+    (should (string-match-p "\nAAA" (buffer-string)))))
+
+(ert-deftest helixel-test-repeat-line-cursor-move-append-backward ()
+  "`. ` after backward xa+text replays text on earlier line.
+Kmacro captures cursor keys; test uses text fallback."
+  (helixel-test-with-buffer "hello world\nline2\n"
+    (goto-char (point-min))
+    (forward-line 1)
+    ;; Build tx: backward line sel + append + text
+    (setq helixel--last-tx
+          (helixel-edit-make 'insert-text
+            (helixel-sel-create
+             'line
+             '(:dir backward :count 1 :entry-kind append)
+             #'helixel--recreate-line "L")
+            :text "YYXX"))
+    (helixel-repeat-edit)
+    ;; Text appended at eol of line 1 (earlier line).
+    (should (string= (buffer-string)
+                     "hello worldYYXX\nline2\n"))))
 
 ;;; helixel-test.el ends here

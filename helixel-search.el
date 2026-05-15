@@ -39,12 +39,6 @@
   "Search and find-char for helixel-mode."
   :group 'helixel)
 
-(defcustom helixel-search-activate-mark t
-  "After search exits, activate the mark on the match."
-  :type 'boolean
-  :group 'helixel-search)
-
-
 (defcustom helixel-search-repeat-categories '(search find-char)
   "Action :category symbols that `helixel-search-repeat-next' can repeat.
 Supported values: `search' and `find-char'."
@@ -135,6 +129,42 @@ Only affects entries whose :category is repeatable."
   "Non-nil if a region was active before the search started.
 Let-bound by `helixel-search--at-point'.")
 
+;; ---------------------------------------------------------------------------
+;; Isearch-compatible search helper — used by n/N repeat and . replay
+;;
+;; `isearch-search-string' respects all isearch settings:
+;;   case-fold-search, isearch-invisible, isearch-regexp-function, etc.
+;; This ensures `.` repeat uses the same search behavior as
+;; the original / ? search, including case folding and hidden chars.
+
+(defun helixel-search--search (pattern dir &optional bound noerror)
+  "Search for PATTERN in DIR using isearch-compatible settings.
+DIR is \=`forward' or \=`backward'.
+BOUND limits the search range (nil = whole buffer).
+Pattern is searched as a regexp (isearch-regexp = t).
+Signals \=`search-failed' when not found (NOERROR is nil).
+Returns the match position (point moves to \=`match-end')."
+  (let ((isearch-string pattern)
+        (isearch-regexp t)
+        (isearch-forward (eq dir 'forward)))
+    (isearch-search-string pattern bound noerror)))
+
+;; ---------------------------------------------------------------------------
+;; Selection context for `.` repeat
+
+(defun helixel-search--set-sel-ctx ()
+  "Store the current search in `helixel--repeat-sel-ctx'.
+So the next edit command (c/d/y) records it for `.` and `,` repeat."
+  (when-let* ((pat (helixel--action-get helixel--repeat-data :pattern))
+              (dir (helixel-repeat-dir)))
+    (setq helixel--repeat-sel-ctx
+          (helixel-sel-create
+           'search `(:pattern ,pat :dir ,dir)
+           #'helixel--recreate-search
+           ;; display closure
+           (lambda (c)
+             (concat "/" (or (helixel-sel-search-pattern c) "?")))))))
+
 (defun helixel-search--done-hook ()
   "Hook called at the end of isearch to mark the match."
   (remove-hook 'isearch-mode-end-hook #'helixel-search--done-hook t)
@@ -146,17 +176,18 @@ Let-bound by `helixel-search--at-point'.")
     (helixel-repeat-set 'search :pattern isearch-string)
     (helixel-repeat-set-dir
      (helixel--live-cat-get :dir)))
-  (helixel-search--handle-done helixel-search--had-region))
+  (helixel-search--handle-done helixel-search--had-region)
+  (helixel-search--set-sel-ctx))
 
-(defun helixel-search--handle-done (had-region)
+(defun helixel-search--handle-done (_had-region)
   "Handle region after isearch finishes.
-HAD-REGION is non-nil if there was a region before the search."
+Always activates the mark on the match for visual feedback.
+_HAD-REGION is ignored (kept for signature compatibility)."
   (when (and isearch-success isearch-other-end)
     (unless (eq helixel--current-state 'visual)
       (set-marker (mark-marker) isearch-other-end))
-    (if (or had-region helixel-search-activate-mark)
-        (progn (activate-mark) (setq transient-mark-mode (cons 'only t)))
-      (setq deactivate-mark t))))
+    (activate-mark)
+    (setq transient-mark-mode (cons 'only t))))
 
 ;; ---------------------------------------------------------------------------
 ;; / ?  — prompt isearch-regexp
@@ -252,7 +283,8 @@ so that `isearch-repeat-forward' / `isearch-repeat-backward' find it."
     (if (< dir 0)
         (isearch-repeat-backward (- dir))
       (isearch-repeat-forward dir))
-    (helixel-search--handle-done had-region)))
+    (helixel-search--handle-done had-region)
+    (helixel-search--set-sel-ctx)))
 
 ;; ---------------------------------------------------------------------------
 ;; Find-char: f F t T
@@ -463,27 +495,22 @@ so that subsequent n/N picks it up via `helixel-search--isearch-repeat'."
                            :char (helixel--action-cat-get action :char))
        (helixel-search--find-char-core action use-dir))
        ('search
-       (let* ((pattern (helixel--action-cat-get action :pattern))
-              (had-region (region-active-p))
-              (isearch-string pattern)
-              (isearch-regexp t)
-              (isearch-forward (eq use-dir 'forward))
-              (isearch-success nil)
-              (isearch-other-end nil)
-              (case-fold-search (isearch-no-upper-case-p pattern t)))
-         (helixel-action-start cat (helixel--action-get action :subcat))
-         (helixel--live-search-set pattern use-dir)
-         (helixel-action-commit)
-         (helixel-repeat-set 'search :pattern pattern)
-         (condition-case nil
-             (if (eq use-dir 'forward)
-                 (re-search-forward pattern nil t)
-               (re-search-backward pattern nil t))
-           (search-failed (message "Search failed: %s" pattern)))
-         (setq isearch-success (and (match-beginning 0) t))
-         (when isearch-success
-           (setq isearch-other-end (match-beginning 0)))
-         (helixel-search--handle-done had-region))))
+        (let* ((pattern (helixel--action-cat-get action :pattern))
+               (had-region (region-active-p))
+               (isearch-success nil)
+               (isearch-other-end nil))
+          (helixel-action-start cat (helixel--action-get action :subcat))
+          (helixel--live-search-set pattern use-dir)
+          (helixel-action-commit)
+          (helixel-repeat-set 'search :pattern pattern)
+          (condition-case nil
+              (helixel-search--search pattern use-dir)
+            (search-failed (message "Search failed: %s" pattern)))
+          (setq isearch-success (and (match-beginning 0) t))
+          (when isearch-success
+            (setq isearch-other-end (match-beginning 0)))
+          (helixel-search--handle-done had-region)
+          (helixel-search--set-sel-ctx))))
     (when (eq action (car helixel--action-ring))
       (helixel-search--sync-ring-front-dir use-dir))))
 
@@ -531,6 +558,9 @@ FORWARDP: t = use the entry's stored direction as-is,
   (setq isearch-lazy-count t)
   (advice-add 'keyboard-quit :before #'helixel-search--unhighlight)
   (add-hook 'lazy-count-update-hook #'helixel-search--count-hook))
+
+;; ---------------------------------------------------------------------------
+;; Search selection replay (for `.` and `,`)
 
 ;; Register keybindings
 

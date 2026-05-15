@@ -22,14 +22,15 @@
 ;;
 ;; Unified edit transaction model for helixel-mode.
 ;;
-;; An edit transaction is a plist describing one editing operation:
-;; what was done (:op), on what selection (:sel), with what extra
-;; data (:payload), and where it started (:marker).
+;; An edit transaction is a `helixel-edit' struct describing one
+;; editing operation: what was done (op slot), on what selection
+;; (sel slot), with what extra data (payload slot), and where it
+;; started (marker slot).
 ;;
-;; This module provides the schema, builder, equality, and display
-;; helpers.  It has NO dependencies on other helixel modules and
-;; NO side effects.  It is the single source of truth for the
-;; edit data model, consumed by:
+;; This module provides the struct definition, builder, equality,
+;; and display helpers.  It has NO dependencies on other helixel
+;; modules and NO side effects.  It is the single source of truth
+;; for the edit data model, consumed by:
 ;;   - helixel-repeat (dot-repeat .)
 ;;   - helixel-action (action ring, ; jumping, history display)
 ;;   - helixel-common (interactive edit command façades)
@@ -39,90 +40,289 @@
 (require 'cl-lib)
 
 ;; ---------------------------------------------------------------------------
-;; Transaction Plist Schema
+;; helixel-sel cl-struct (closure-based selection descriptor)
+
+(cl-defstruct (helixel-sel (:conc-name helixel-sel--)
+                           (:constructor helixel-sel--internal))
+  "Selection descriptor for dot-repeat with closure-based recreate.
+KIND is a symbol identifying the selection type.
+CTX is a plist of mutable extra data (:count, :dir, :moves, ...).
+RECREATE is a function (CTX) that recreates the selection at point.
+DISPLAY is a string or a function (CTX) → string."
+  kind
+  ctx
+  recreate
+  display)
+
+;; helixel-sel CTX schema
+;; ─────────────────────
+;; Each selection kind uses a specific subset of ctx keys.
+;; The table below is the single source of truth for valid ctx
+;; keys per kind.  Recreate functions (in their respective
+;; modules) are the sole consumers of ctx.
 ;;
-;; (:op     symbol    ;; operator name; see the op registry below for the
-;;                    ;; live set.  Owning modules register via
-;;                    ;; `helixel-edit-defop'.
-;;  :sel    plist|nil ;; selection descriptor - see `helixel-sel-recreate'
-;;                    ;; \(:kind K [:count N] [:delimiter D] [:command S]
-;;                    ;;        [:moves \(\(CMD . COUNT\) ...\)] ...\)
-;;                    ;; nil = no selection (cursor-at-point operations)
-;;  :payload plist    ;; operator-specific data (may be nil; mutate via
-;;                    ;; `helixel-edit-with-payload' - never `plist-put' in
-;;                    ;; place since the head may be nil).
-;;  :marker marker)   ;; position where the edit started (used by `;'
-;;                    ;; jumping in helixel-action.el).
+;; Kind                      CTX keys                     Setter(s)
+;; ----                      ------                  ---------
+;; line                      :dir    (forward|backward)   movement cmd
+;;                           :count  (integer ≥ 1)        same
+;; rect                      :count  (integer ≥ 1)        movement cmd
+;; movement                  :moves  ((CMD . COUNT) ...)  visual move fns
+;; textobj                   :command  (symbol)           textobj fns
+;;                           :count    (integer)          same
+;;                           :delimiter (plist)            same
+;; search                    :pattern  (string)           search fns
+;;                           :dir      (forward|backward)  same
+;; surround                  :delimiter (plist)           surround fns
+;; insert-selection-start    :cursor-offset (int|nil)     insert-exit
+;; insert-selection-end      :cursor-offset (int|nil)     insert-exit
+;; insert-beginning-line     (none)                       —
+;; insert-end-line           (none)                       —
+;; insert-search-offset      :offset (integer)            insert cmd
+
+(defun helixel-sel-create (kind ctx recreate &optional display)
+  "Create a `helixel-sel' struct for selection KIND.
+CTX is a plist of extra data.
+RECREATE is a function (CTX) that recreates the selection at point.
+DISPLAY is an optional string or function (CTX) → string."
+  (helixel-sel--internal
+   :kind kind
+   :ctx ctx
+   :recreate recreate
+   :display (or display (symbol-name kind))))
+
+(defun helixel-sel-call-recreate (sel)
+  "Recreate selection described by SEL, a `helixel-sel' struct.
+Calls the stored RECREATE closure with CTX."
+  (when (helixel-sel-p sel)
+    (funcall (helixel-sel--recreate sel) (helixel-sel--ctx sel))))
+
+(defun helixel-sel-call-display (sel)
+  "Return display string for `helixel-sel' struct SEL.
+Evaluates the DISPLAY field (string or function)."
+  (when (helixel-sel-p sel)
+    (let ((d (helixel-sel--display sel)))
+      (if (functionp d) (funcall d (helixel-sel--ctx sel)) d))))
+
+(defun helixel-sel-get-kind (sel)
+  "Return the :kind from `helixel-sel' struct SEL."
+  (when (helixel-sel-p sel)
+    (helixel-sel--kind sel)))
+
+(defun helixel-sel-get-ctx (sel)
+  "Return the CTX (data plist) from `helixel-sel' struct SEL."
+  (when (helixel-sel-p sel)
+    (helixel-sel--ctx sel)))
+
+(defun helixel-sel-equal-p (s1 s2)
+  "Return non-nil if S1 and S2 represent the same selection.
+Compares kind and ctx.  Returns t when both are nil."
+  (if (or (null s1) (null s2))
+      (eq s1 s2)
+    (and (eq (helixel-sel-get-kind s1) (helixel-sel-get-kind s2))
+         (equal (helixel-sel-get-ctx s1) (helixel-sel-get-ctx s2)))))
+
+(defun helixel-sel-get-field (sel key)
+  "Get KEY from `helixel-sel' struct SEL's ctx.
+Returns nil if SEL is nil."
+  (when sel
+    (plist-get (helixel-sel-get-ctx sel) key)))
+
+(defun helixel-sel-count (sel)
+  "Return :count from `helixel-sel' struct SEL's ctx, or 0 if absent.
+Returns 0 if SEL is nil."
+  (if (null sel) 0
+    (or (plist-get (helixel-sel-get-ctx sel) :count) 0)))
+
+(defun helixel-sel-update-ctx (sel key value)
+  "Return a new `helixel-sel' struct from SEL with CTX updated.
+Sets KEY to VALUE in the ctx plist."
+  (if (helixel-sel-p sel)
+      (let ((new-ctx (plist-put (copy-sequence (helixel-sel--ctx sel))
+                                key value)))
+        (helixel-sel--internal
+         :kind (helixel-sel--kind sel)
+         :ctx new-ctx
+         :recreate (helixel-sel--recreate sel)
+         :display (helixel-sel--display sel)))
+    sel))
+
+;; ---------------------------------------------------------------------------
+;; Kind-specific ctx accessors
+;;
+;; Each function takes either a `helixel-sel' struct or a raw ctx
+;; plist (for use inside recreate closures).  These are the preferred
+;; way to read ctx fields; they document the valid keys per kind
+;; through their names.  See the CTX schema table above for details.
+
+(defsubst helixel-sel--ctx-ensure (obj)
+  "If OBJ is a `helixel-sel' struct, return its ctx; else return OBJ."
+  (if (helixel-sel-p obj) (helixel-sel--ctx obj) obj))
+
+;;;; line
+
+(defsubst helixel-sel-line-dir (obj)
+  "Return :dir from line ctx (\=`forward' or \=`backward'), default \=`forward'.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (or (plist-get (helixel-sel--ctx-ensure obj) :dir) 'forward))
+
+(defsubst helixel-sel-line-count (obj)
+  "Return :count from line ctx, default 1.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (or (plist-get (helixel-sel--ctx-ensure obj) :count) 1))
+
+;;;; rect
+
+(defsubst helixel-sel-rect-count (obj)
+  "Return :count from rect ctx, default 1.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (or (plist-get (helixel-sel--ctx-ensure obj) :count) 1))
+
+;;;; movement
+
+(defsubst helixel-sel-movement-moves (obj)
+  "Return :moves list from movement ctx ((CMD . COUNT) ...).
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :moves))
+
+;;;; textobj
+
+(defsubst helixel-sel-textobj-command (obj)
+  "Return :command (symbol) from textobj ctx.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :command))
+
+(defsubst helixel-sel-textobj-count (obj)
+  "Return :count from textobj ctx, default 1.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (or (plist-get (helixel-sel--ctx-ensure obj) :count) 1))
+
+(defsubst helixel-sel-textobj-delimiter (obj)
+  "Return :delimiter (plist) from textobj ctx.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :delimiter))
+
+;;;; search
+
+(defsubst helixel-sel-search-pattern (obj)
+  "Return :pattern (string) from search ctx.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :pattern))
+
+(defsubst helixel-sel-search-dir (obj)
+  "Return :dir from search ctx, default \=`forward'.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (or (plist-get (helixel-sel--ctx-ensure obj) :dir) 'forward))
+
+(defsubst helixel-sel-search-entry-kind (obj)
+  "Return :entry-kind (insert or append) from search ctx, or nil.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :entry-kind))
+
+(defsubst helixel-sel-search-cursor-offset (obj)
+  "Return :cursor-offset (integer) from search ctx, or nil.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :cursor-offset))
+
+;;;; surround
+
+(defsubst helixel-sel-surround-delimiter (obj)
+  "Return :delimiter (plist) from surround ctx.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :delimiter))
+
+;;;; insert-search-offset
+
+(defsubst helixel-sel-insert-offset (obj)
+  "Return :offset (integer) from insert-search-offset ctx.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :offset))
+
+;;;; insert-selection-start / insert-selection-end
+
+(defsubst helixel-sel-insert-cursor-offset (obj)
+  "Return :cursor-offset (integer) from insert ctx, or nil.
+OBJ is a `helixel-sel' struct or raw ctx plist."
+  (plist-get (helixel-sel--ctx-ensure obj) :cursor-offset))
+
+;; ---------------------------------------------------------------------------
+;; helixel-edit cl-struct (immutable edit transaction)
+
+(cl-defstruct (helixel-edit (:conc-name helixel-edit-))
+  "An immutable editing operation for dot-repeat.
+Slots:
+  OP           — symbol: operator name (kill, change, insert-text, ...)
+  SEL          — `helixel-sel' struct or nil (selection descriptor)
+  PAYLOAD      — plist of operator-specific data (:text, :char, :keys, ...)
+  MARKER       — position marker where the edit started (for `;' jumping)
+  RUNNER       — function (TX) → nil, executes the edit at replay time
+  DISPLAY-FIELD — string or function (TX) → string, stored at record time"
+  op
+  sel
+  payload
+  marker
+  runner
+  display-field)
 
 ;; ---------------------------------------------------------------------------
 ;; Builder
 
 (defun helixel-edit-make (op sel-ctx &rest payload-kv)
-  "Create an edit transaction plist.
-OP is a registered operator symbol (see `helixel-edit-defop').
+  "Create a `helixel-edit' transaction struct.
+OP is a registered operator symbol.
 SEL-CTX is a selection descriptor or nil.
-PAYLOAD-KV are keyword/value pairs forming the :payload plist."
-  (list :op op
-        :sel sel-ctx
-        :payload payload-kv
-        :marker (point-marker)))
-
-;; ---------------------------------------------------------------------------
-;; Accessors
-
-(defsubst helixel-edit-op (tx)
-  "Return the :op of transaction TX."
-  (plist-get tx :op))
-
-(defsubst helixel-edit-sel (tx)
-  "Return the :sel (selection context) of transaction TX, or nil."
-  (plist-get tx :sel))
-
-(defsubst helixel-edit-payload (tx)
-  "Return the :payload plist of transaction TX."
-  (plist-get tx :payload))
-
-(defsubst helixel-edit-marker (tx)
-  "Return the :marker of transaction TX."
-  (plist-get tx :marker))
+PAYLOAD-KV are keyword/value pairs.  Special keys:
+  :runner  FUNCTION — stored in slot, called at replay time
+  :display STRING|FUNCTION — stored in DISPLAY-FIELD slot, for history
+All other keys form the :payload plist."
+  (let (runner display-field rest)
+    (while payload-kv
+      (pcase (car payload-kv)
+        (:runner
+         (setq runner (cadr payload-kv))
+         (setq payload-kv (cddr payload-kv)))
+        (:display
+         (setq display-field (cadr payload-kv))
+         (setq payload-kv (cddr payload-kv)))
+        (_
+         (push (car payload-kv) rest)
+         (push (cadr payload-kv) rest)
+         (setq payload-kv (cddr payload-kv)))))
+    (make-helixel-edit :op op
+                       :sel sel-ctx
+                       :payload (nreverse rest)
+                       :marker (point-marker)
+                       :runner runner
+                       :display-field display-field)))
 
 ;; ---------------------------------------------------------------------------
 ;; Equality — for action ring dedup
 
 (defun helixel-edit-equal-p (tx1 tx2)
   "Return non-nil if TX1 and TX2 represent the same editing operation.
-Compares :op, :sel, and :payload.  Ignores :marker (position differs
-on replay) and ignores plist key order in :payload.
+Compares op, sel, and payload.  Ignores marker (position differs
+on replay).
 Returns t when both are nil (non-edit actions are equal for dedup)."
   (if (or (null tx1) (null tx2))
       (eq tx1 tx2)
     (and (eq (helixel-edit-op tx1) (helixel-edit-op tx2))
-         (equal (helixel-edit-sel tx1) (helixel-edit-sel tx2))
-         (equal (helixel-edit-payload tx1) (helixel-edit-payload tx2)))))
+         (helixel-sel-equal-p (helixel-edit-sel tx1)
+                              (helixel-edit-sel tx2))
+         (equal (helixel-edit-payload tx1)
+                (helixel-edit-payload tx2)))))
 
 ;; ---------------------------------------------------------------------------
-;; Display — for action ring history and completion
-
-(cl-defgeneric helixel-sel-display (kind ctx)
-  "Return a short human-readable string describing KIND with descriptor CTX.
-Methods specialise on KIND via `(eql SYMBOL)'.  Used by
-`helixel-edit-display' for action-history rendering.  Default returns
-the `symbol-name' of KIND.")
-
-(cl-defmethod helixel-sel-display (kind _ctx)
-  "Default: just KIND's `symbol-name'."
-  (symbol-name kind))
+;; Display
 
 (defun helixel-edit-display (tx)
   "Return a short display string for transaction TX.
-Format: OP[.SEL][xCOUNT].  Op label and sel label are pluggable;
-see `helixel-edit-op-display' and `helixel-sel-display'."
+Format: OP[.SEL][xCOUNT].  Uses DISPLAY-FIELD slot if stored;
+otherwise falls back to `helixel-edit-op-display'."
   (let* ((op (helixel-edit-op tx))
          (sel (helixel-edit-sel tx))
-         (op-str (helixel-edit-op-display op tx))
-         (sel-kind (plist-get sel :kind))
-         (sel-str (when sel-kind (helixel-sel-display sel-kind sel)))
-         (count (plist-get sel :count)))
+         (op-str (or (helixel-edit-display-field tx)
+                     (helixel-edit-op-display op tx)))
+         (sel-str (when sel (helixel-sel-call-display sel)))
+         (count (helixel-sel-count sel)))
     (concat op-str
             (when sel-str (concat "." sel-str))
             (when (and count (> count 1)) (format "x%d" count)))))
@@ -131,84 +331,52 @@ see `helixel-edit-op-display' and `helixel-sel-display'."
 ;; Payload helpers
 
 (defun helixel-edit-with-payload (tx key value)
-  "Return a new transaction equal to TX with payload KEY set to VALUE.
-Does not mutate TX (the existing :payload may be shared with other
-consumers, including a possibly-nil placeholder from `helixel-edit-make')."
+  "Return a new transaction equal to TX with :payload KEY set to VALUE.
+Does not mutate TX."
   (let* ((payload (copy-sequence (helixel-edit-payload tx)))
-         (new-payload (plist-put payload key value)))
-    (plist-put (copy-sequence tx) :payload new-payload)))
+         (new-payload (plist-put payload key value))
+         (new-tx (copy-helixel-edit tx)))
+    (setf (helixel-edit-payload new-tx) new-payload)
+    new-tx))
 
 ;; ---------------------------------------------------------------------------
-;; Operator registry
+;; Operator registry (symbol properties)
 ;;
-;; Each :op symbol registers a runner (FN TX) that performs the edit at
-;; replay time, plus an optional :display label for history rendering.
-;; Modules register their own ops at load-time (see helixel-common.el and
-;; helixel-surround.el) — helixel-repeat.el dispatches purely through this
-;; registry, so adding a new operator never requires editing the kernel.
-
-(defvar helixel-edit--op-registry (make-hash-table :test 'eq)
-  "Hash OP-SYMBOL → plist (:runner FN :display STRING).")
-
-(defun helixel-edit-register-op (op &rest props)
-  "Register edit OP with PROPS keyword list.
-Supported keys: :runner FUNCTION, :display STRING.
-Replaces any existing registration."
-  (puthash op props helixel-edit--op-registry))
+;; Each :op symbol stores its runner and display label as symbol
+;; properties (`helixel-op-runner', `helixel-op-display').
+;; Modules define ops at load-time via `helixel-edit-defop'.
 
 (defmacro helixel-edit-defop (op &rest props)
-  "Convenience macro wrapping `helixel-edit-register-op'.
-OP is an unquoted symbol; PROPS is a keyword plist."
+  "Define edit operator OP with keyword PROPS.
+PROPS is a plist with keys :runner (function (TX)),
+:display (string or function (TX) -> string),
+and :repeat-advance (nil, `line', `auto', or function)."
   (declare (indent 1))
-  `(helixel-edit-register-op ',op ,@props))
+  (let ((runner (plist-get props :runner))
+        (display (plist-get props :display))
+        (advance (plist-get props :repeat-advance)))
+    `(progn
+       ,@(when runner `((put ',op 'helixel-op-runner ,runner)))
+       ,@(when display `((put ',op 'helixel-op-display ,display)))
+       ,@(when advance `((put ',op 'helixel-repeat-advance ,advance))))))
 
 (defun helixel-edit-op-runner (op)
-  "Return the runner function registered for OP, or nil."
-  (plist-get (gethash op helixel-edit--op-registry) :runner))
+  "Return the runner function for OP (via `helixel-op-runner' property)."
+  (get op 'helixel-op-runner))
 
 (defun helixel-edit-op-display (op &optional tx)
-  "Return display label for OP.
-The registry's :display field may be a string or a function (TX -> STRING).
-Falls back to OP's `symbol-name' when unset."
-  (let ((d (plist-get (gethash op helixel-edit--op-registry) :display)))
+  "Return display label for OP, optionally evaluated with TX.
+Reads `helixel-op-display' symbol property.  If the property is
+a function, it is called with TX.  Falls back to `symbol-name'."
+  (let ((d (get op 'helixel-op-display)))
     (cond
      ((stringp d) d)
      ((functionp d) (or (funcall d tx) (symbol-name op)))
      (t (symbol-name op)))))
 
-(defun helixel-edit-operator-p (op)
-  "Return non-nil if OP is a registered edit operator."
-  (and (gethash op helixel-edit--op-registry) t))
-
-;; ---------------------------------------------------------------------------
-;; Selection-descriptor dispatch
-;;
-;; A selection descriptor is a plist whose :kind drives how the selection is
-;; recreated at replay time.  Owners of a selection kind register a method on
-;; `helixel-sel-recreate' (see helixel-textobj.el, helixel-common.el and
-;; helixel-surround.el).  This module ships only the generic and the
-;; `(eql movement)' method (which has no module dependencies).
-
-(cl-defgeneric helixel-sel-recreate (kind ctx)
-  "Recreate a selection at point given descriptor KIND and full CTX plist.
-Methods specialise on KIND via `(eql SYMBOL)'.  CTX carries any
-additional fields (:count, :delimiter, :moves, :command, ...).
-The default method is a no-op so unknown / metadata-only kinds
-silently leave point alone.")
-(cl-defmethod helixel-sel-recreate (_kind _ctx)
-  "Default: do nothing.  Overridden by methods on `(eql SYMBOL)'."
-  nil)
-
-(defvar helixel--current-state)
-
-(cl-defmethod helixel-sel-recreate ((_kind (eql movement)) ctx)
-  "Replay a recorded sequence of movement commands while in visual state.
-CTX has shape (:kind movement :moves ((CMD . COUNT) ...)).  Moves are
-stored newest-first; replayed oldest-first."
-  (let ((helixel--current-state 'visual))
-    (dolist (m (reverse (plist-get ctx :moves)))
-      (dotimes (_ (cdr m))
-        (funcall (car m))))))
+(defun helixel-edit-op-advance (op)
+  "Return the `:repeat-advance' property for OP, or nil."
+  (get op 'helixel-repeat-advance))
 
 (provide 'helixel-edit)
 ;;; helixel-edit.el ends here

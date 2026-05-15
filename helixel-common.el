@@ -42,6 +42,7 @@
 (declare-function helixel-surround-add-tag "helixel-surround")
 (declare-function helixel-surround-delete "helixel-surround")
 (declare-function helixel-surround-replace "helixel-surround")
+(declare-function helixel-search--search "helixel-search")
 
 
 (defcustom helixel-major-mode-default-states
@@ -122,10 +123,12 @@ METADATA is a plist:
   :dir           DIR  — direction for n/N repeat context (forward, backward)
   :edit-op       OP   — calls (helixel--record-edit OP)
   :clear-highlights    — default t for :category movement, nil otherwise
-  :params        PARAM-LIST  — optional function parameter list (e.g., (&optional count))
+  :params        PARAM-LIST  — optional function parameter list
+                                (e.g., (&optional count))
 
-All tracking code is expanded inline at compile time — zero hooks, zero advice.
-The command body contains only business logic.
+All tracking code is expanded inline at compile time — zero hooks,
+zero advice.
+BODY is the command's business logic.
 If the body begins with (interactive ...), that form is extracted and placed
 before the tracking code; otherwise (interactive) is inserted automatically."
   (declare (indent 2))
@@ -137,10 +140,14 @@ before the tracking code; otherwise (interactive) is inserted automatically."
                     (plist-get metadata :clear-highlights)
                   (eq cat 'movement)))
          (has-interactive (and (consp (car body))
-                              (eq (caar body) 'interactive)))
+                               (eq (caar body) 'interactive)))
          (interactive-form (if has-interactive (car body) '(interactive)))
          (rest-body (if has-interactive (cdr body) body))
-         (params (plist-get metadata :params)))
+         (params (plist-get metadata :params))
+         (track-visual
+          (when (eq cat 'movement)
+            `((when (eq helixel--current-state 'visual)
+                (helixel--track-visual-move ',name))))))
     `(defun ,name ,(or params ())
        ,(format "Helixel %s.%s command." cat sub)
        ,interactive-form
@@ -155,8 +162,9 @@ before the tracking code; otherwise (interactive) is inserted automatically."
        ;; ── Body (pure business logic) ──
        ,@rest-body
        ;; ── Visual-mode tracking (for . replay of movements) ──
-       (when (eq helixel--current-state 'visual)
-         (helixel--track-visual-move ',name)))))
+       ;; Only movement commands accumulate moves; edit commands
+       ;; record the accumulated moves via `helixel--record-edit'.
+       ,@track-visual)))
 
 ;; Wire textobj hooks for action recording and visual state detection.
 (setq helixel-textobj-action-function #'helixel-action-start)
@@ -189,57 +197,108 @@ before the tracking code; otherwise (interactive) is inserted automatically."
 
 (defun helixel--track-visual-move (cmd)
   "Append movement CMD to `helixel--repeat-sel-ctx' for visual-mode moves.
-Accumulates consecutive same-command moves by incrementing count."
-  (when (eq helixel--current-state 'visual)
+Creates/updates a `helixel-sel' struct of kind `movement'.
+No-op during dot-repeat replay."
+  (when (and (eq helixel--current-state 'visual)
+             (not helixel--inhibit-repeat-record))
     (let ((ctx helixel--repeat-sel-ctx)
           (entry (cons cmd 1)))
-      (if (and ctx (eq (plist-get ctx :kind) 'movement))
-          (let* ((moves (plist-get ctx :moves))
+      (if (and ctx (eq (helixel-sel-get-kind ctx) 'movement))
+          (let* ((moves (helixel-sel-movement-moves ctx))
                  (last (car moves)))
             (if (and last (eq (car last) cmd))
                 (setcdr last (1+ (cdr last)))
-              (plist-put ctx :moves (cons entry moves))))
+              (setq helixel--repeat-sel-ctx
+                    (helixel-sel-update-ctx ctx :moves
+                                            (cons entry moves)))))
         (setq helixel--repeat-sel-ctx
-              `(:kind movement :moves (,entry)))))))
+              (helixel-sel-create 'movement
+                                  `(:moves (,entry))
+                                  #'helixel--recreate-movement
+                                  (lambda (c)
+                                    (let ((ms (helixel-sel-movement-moves c)))
+                                      (let ((n (apply #'+ (mapcar #'cdr ms))))
+                                        (format "v%d" n))))))))))
 
-(helixel-define-command helixel-insert
-  (:category state :subcat insert :edit-op insert-text)
-  (if (use-region-p)
-      (goto-char (region-beginning)))
-  (setq helixel--change-track-marker (point-marker))
-  (when (eq helixel-repeat-change-method 'keys)
-    (setq helixel--insert-keys t))
+(defun helixel--enter-insert ()
+  "Enter insert mode, recording buffer changes via the change hooks.
+Sets up change-hook recording and switches to insert state."
+  (helixel--insert-begin)
   (helixel--switch-state 'insert))
 
+(helixel-define-command helixel-insert
+    (:category state :subcat insert)
+  (cond
+   ;; Search context: refine the search sel with entry-kind
+   ((and helixel--repeat-sel-ctx
+         (eq (helixel-sel-get-kind helixel--repeat-sel-ctx) 'search))
+    (setq helixel--repeat-sel-ctx
+          (helixel-sel-update-ctx helixel--repeat-sel-ctx
+                                  :entry-kind 'insert))
+    (goto-char (region-beginning)))
+   ;; Line selection: preserve sel for `.` auto-advance
+   ((and helixel--repeat-sel-ctx
+         (eq (helixel-sel-get-kind helixel--repeat-sel-ctx) 'line))
+    (setq helixel--repeat-sel-ctx
+          (helixel-sel-update-ctx helixel--repeat-sel-ctx
+                                  :entry-kind 'insert))
+    (goto-char (region-beginning)))
+   ;; Manual region
+   ((use-region-p)
+    (setq helixel--repeat-sel-ctx
+          (helixel-sel-create
+           'insert-selection-start nil
+           #'helixel--recreate-insert-selection-start "is"))
+    (goto-char (region-beginning)))
+   ;; No context
+   (t
+    (setq helixel--repeat-sel-ctx nil)))
+  (helixel--record-edit 'insert-text)
+  (setq helixel--change-track-marker (point-marker))
+  (helixel--enter-insert))
+
 (helixel-define-command helixel-insert-exit
-  (:category state :subcat exit)
-  (when helixel--insert-keys
-    ;; Pop the exit key (escape / C-g / …) so the replay sequence
-    ;; only contains the productive insert-mode keystrokes.
-    ;; `t' is a sentinel meaning "recording but no keys yet".
-    (let ((keys (if (eq helixel--insert-keys t)
-                    (vector)
-                  (pop helixel--insert-keys)
-                  (vconcat (nreverse helixel--insert-keys)))))
+    (:category state :subcat exit)
+  (let* ((result (helixel--insert-finish))
+         (keys (car result))
+         (commands (cdr result))
+         (text (when helixel--change-track-marker
+                 (and (marker-position helixel--change-track-marker)
+                      (buffer-substring
+                       helixel--change-track-marker (point))))))
+    ;; Store kmacro keys as primary replay mechanism
+    (when keys
       (setq helixel--last-tx
             (helixel-edit-with-payload helixel--last-tx :keys keys)))
-    (setq helixel--insert-keys nil))
-  (when (and helixel--change-track-marker
-             (member (helixel-edit-op helixel--last-tx)
-                     '(change insert-text)))
-    (let* ((text (buffer-substring helixel--change-track-marker (point)))
-           (key (if (eq (helixel-edit-op helixel--last-tx) 'change)
-                    :inserted-text :text)))
+    ;; Store executed commands (keymap-independent replay)
+    (when commands
       (setq helixel--last-tx
-            (helixel-edit-with-payload helixel--last-tx key text)))
-    (set-marker helixel--change-track-marker nil)
-    (setq helixel--change-track-marker nil))
-  (when helixel--rect-replay-data
-    (helixel--rect-replay))
-  (let ((state (helixel--default-state-for-buffer)))
-    (when (eq state 'insert)
-      (setq state 'normal))
-    (helixel--switch-state state)))
+            (helixel-edit-with-payload helixel--last-tx :commands
+                                       commands)))
+    ;; Store text as replay fallback (tests, programmatic use)
+    (when text
+      (setq helixel--last-tx
+            (helixel-edit-with-payload helixel--last-tx :text text))
+      ;; For change operations, same text as :inserted-text
+      (when (eq (helixel-edit-op helixel--last-tx) 'change)
+        (setq helixel--last-tx
+              (helixel-edit-with-payload helixel--last-tx
+                                         :inserted-text text))))
+    ;; Cleanup
+    (when helixel--change-track-marker
+      (set-marker helixel--change-track-marker nil)
+      (setq helixel--change-track-marker nil))
+    ;; Sync ring head
+    (when (and helixel--edit-ring helixel--last-tx)
+      (setcar helixel--edit-ring helixel--last-tx))
+    ;; Rect replay
+    (when helixel--rect-replay-data
+      (helixel--rect-replay))
+    ;; Switch state
+    (let ((state (helixel--default-state-for-buffer)))
+      (when (eq state 'insert)
+        (setq state 'normal))
+      (helixel--switch-state state))))
 
 (defun helixel--clear-highlights ()
   "Clear any active highlight, unless in visual state.
@@ -280,8 +339,8 @@ Without highlights clearing:
                        ,@(when clear
                            '((helixel--clear-highlights)))))
       `(helixel-define-command ,name
-         (:category movement :subcat ,type :dir ,dir
-          :clear-highlights ,clear)
+           (:category movement :subcat ,type :dir ,dir
+                      :clear-highlights ,clear)
          (call-interactively #',builtin)))))
 
 (defmacro helixel-define-movements (&rest specs)
@@ -327,82 +386,83 @@ thingatpt.  Defaults to \\='word."
   "Create a region around movement defined in BODY.
 If a region is already active, no new region is created.
 
-Note: `helixel-define-command' handles `clear-highlights' and `track-visual-move'
-automatically, so this macro only does push-mark + activate."
+Note: `helixel-define-command' handles `clear-highlights'
+and `track-visual-move'
+automatically, so this macro only does `push-mark' + activate."
   `(let ((current (point)))
      ,@body
      (unless (use-region-p)
        (push-mark current t 'activate))))
 
 (helixel-define-command helixel-forward-word-start
-  (:category movement :subcat word :dir forward)
+    (:category movement :subcat word :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-word)))
 
 (helixel-define-command helixel-forward-word-end
-  (:category movement :subcat word :dir forward)
+    (:category movement :subcat word :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-word)))
 
 (helixel-define-command helixel-backward-word-start
-  (:category movement :subcat word :dir backward)
+    (:category movement :subcat word :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-word -1)))
 
 (helixel-define-command helixel-backward-word-end
-  (:category movement :subcat word :dir backward)
+    (:category movement :subcat word :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-word -1)))
 
 (helixel-define-command helixel-forward-WORD-start
-  (:category movement :subcat WORD :dir forward)
+    (:category movement :subcat WORD :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-WORD)))
 
 (helixel-define-command helixel-forward-WORD-end
-  (:category movement :subcat WORD :dir forward)
+    (:category movement :subcat WORD :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-WORD)))
 
 (helixel-define-command helixel-backward-WORD
-  (:category movement :subcat WORD :dir backward)
+    (:category movement :subcat WORD :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-WORD -1)))
 
 
 (helixel-define-command helixel-backward-WORD-end
-  (:category movement :subcat WORD :dir backward)
+    (:category movement :subcat WORD :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-WORD -1)))
 
 (helixel-define-command helixel-forward-symbol-start
-  (:category movement :subcat symbol :dir forward)
+    (:category movement :subcat symbol :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-symbol)))
 
 (helixel-define-command helixel-forward-symbol-end
-  (:category movement :subcat symbol :dir forward)
+    (:category movement :subcat symbol :dir forward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-symbol)))
 
 (helixel-define-command helixel-backward-symbol-start
-  (:category movement :subcat symbol :dir backward)
+    (:category movement :subcat symbol :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-beginning 'helixel-symbol -1)))
 
 (helixel-define-command helixel-backward-symbol-end
-  (:category movement :subcat symbol :dir backward)
+    (:category movement :subcat symbol :dir backward)
   (helixel--with-movement-surround
    (helixel--forward-end 'helixel-symbol -1)))
 
 (helixel-define-command helixel-go-beginning-buffer
-  (:category movement :subcat goto)
+    (:category movement :subcat goto)
   (if current-prefix-arg
       (goto-line (prefix-numeric-value current-prefix-arg))
     (call-interactively #'beginning-of-buffer)))
 
 (helixel-define-command helixel-goto-line
-  (:category movement :subcat goto :params (&optional arg))
+    (:category movement :subcat goto :params (&optional arg))
   (interactive "P")
   (goto-line (if arg
                  (prefix-numeric-value arg)
@@ -410,7 +470,8 @@ automatically, so this macro only does push-mark + activate."
 
 
 (helixel-define-command helixel-select-line
-  (:category movement :subcat lineselect :dir forward :params (&optional count) :clear-highlights nil)
+    (:category movement :subcat lineselect :dir forward
+               :params (&optional count) :clear-highlights nil)
   (interactive "p")
   (let ((n (or count 1))
         (extending (and (region-active-p) (eolp)))
@@ -426,13 +487,18 @@ automatically, so this macro only does push-mark + activate."
         (call-interactively #'next-line)
         (end-of-line)))
     (setq helixel--selection-type 'line)
-    (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
+    (let* ((prev-count (helixel-sel-count helixel--repeat-sel-ctx))
+           (new-count (if extending (+ prev-count n) n)))
       (setq helixel--repeat-sel-ctx
-            (list :kind 'line
-                  :count (if extending (+ prev-count n) n))))))
+            (helixel-sel-create 'line `(:dir forward :count ,new-count)
+                                #'helixel--recreate-line
+                                (if (> new-count 1)
+                                    (format "Lx%d" new-count)
+                                  "L"))))))
 
 (helixel-define-command helixel-select-line-up
-  (:category movement :subcat lineselect :dir backward :params (&optional count) :clear-highlights nil)
+    (:category movement :subcat lineselect :dir backward
+               :params (&optional count) :clear-highlights nil)
   (interactive "p")
   (let ((n (or count 1))
         (extending (and (region-active-p) (bolp)))
@@ -448,13 +514,18 @@ automatically, so this macro only does push-mark + activate."
         (call-interactively #'previous-line)
         (beginning-of-line)))
     (setq helixel--selection-type 'line)
-    (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
+    (let* ((prev-count (helixel-sel-count helixel--repeat-sel-ctx))
+           (new-count (if extending (+ prev-count n) n)))
       (setq helixel--repeat-sel-ctx
-            (list :kind 'line :dir 'up
-                  :count (if extending (+ prev-count n) n))))))
+            (helixel-sel-create 'line `(:dir backward :count ,new-count)
+                                #'helixel--recreate-line
+                                (if (> new-count 1)
+                                    (format "L^x%d" new-count)
+                                  "L^"))))))
 
 (helixel-define-command helixel-select-rectangle
-  (:category movement :subcat rectselect :params (&optional count) :clear-highlights nil)
+    (:category movement :subcat rectselect
+               :params (&optional count) :clear-highlights nil)
   (interactive "p")
   (let ((n (or count 1))
         (extending rectangle-mark-mode)
@@ -474,10 +545,14 @@ automatically, so this macro only does push-mark + activate."
         (forward-line 1)
         (rectangle--reset-point-crutches)))
     (setq helixel--selection-type 'rect)
-    (let ((prev-count (or (plist-get helixel--repeat-sel-ctx :count) 0)))
+    (let* ((prev-count (helixel-sel-count helixel--repeat-sel-ctx))
+           (new-count (if extending (+ prev-count n) n)))
       (setq helixel--repeat-sel-ctx
-            (list :kind 'rect
-                  :count (if extending (+ prev-count n) n))))))
+            (helixel-sel-create 'rect `(:count ,new-count)
+                                #'helixel--recreate-rect
+                                (if (> new-count 1)
+                                    (format "rx%d" new-count)
+                                  "r"))))))
 
 ;;; Line-wise helpers
 
@@ -582,7 +657,7 @@ Replay typed text on all rectangle lines."
     (goto-char beg)
     (setq helixel--rect-replay-marker (point-marker))
     (setq helixel--rect-replay-data `(:col ,col :line-count ,line-count))
-    (helixel--switch-state 'insert)))
+    (helixel--enter-insert)))
 
 (defun helixel--rect-replay ()
   "Replay inserted text from rect change on remaining rectangle lines."
@@ -624,19 +699,17 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
     (kill-region (region-beginning) (region-end)))))
 
 (helixel-define-command helixel-kill-thing-at-point
-  (:category edit :subcat kill :edit-op kill)
+    (:category edit :subcat kill :edit-op kill)
   (helixel--delete-selection)
   (helixel--clear-data))
 
 (helixel-define-command helixel-change-thing-at-point
-  (:category edit :subcat change :edit-op change)
+    (:category edit :subcat change :edit-op change)
   (if (and (use-region-p) (eq (helixel--selection-type) 'rect))
       (helixel--rect-change)
     (helixel--delete-selection)
     (setq helixel--change-track-marker (point-marker))
-    (when (eq helixel-repeat-change-method 'keys)
-      (setq helixel--insert-keys t))
-    (helixel--switch-state 'insert)))
+    (helixel--enter-insert)))
 
 (defun helixel-visual-exit ()
   "Exit visual state and return to normal state."
@@ -664,44 +737,70 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
       (= cur eol))))
 
 (helixel-define-command helixel-insert-after
-  (:category state :subcat insert :edit-op insert-text)
-  (if (use-region-p)
-      (goto-char (region-end))
+    (:category state :subcat insert)
+  (cond
+   ;; Search context: refine the search sel with entry-kind
+   ((and helixel--repeat-sel-ctx
+         (eq (helixel-sel-get-kind helixel--repeat-sel-ctx) 'search))
+    (setq helixel--repeat-sel-ctx
+          (helixel-sel-update-ctx helixel--repeat-sel-ctx
+                                  :entry-kind 'append))
+    (goto-char (region-end)))
+   ;; Line selection: preserve sel for `.` auto-advance
+   ((and helixel--repeat-sel-ctx
+         (eq (helixel-sel-get-kind helixel--repeat-sel-ctx) 'line))
+    (setq helixel--repeat-sel-ctx
+          (helixel-sel-update-ctx helixel--repeat-sel-ctx
+                                  :entry-kind 'append))
+    (goto-char (region-end)))
+   ;; Manual region
+   ((use-region-p)
+    (setq helixel--repeat-sel-ctx
+          (helixel-sel-create
+           'insert-selection-end nil
+           #'helixel--recreate-insert-selection-end "ie"))
+    (goto-char (region-end)))
+   ;; No context
+   (t
     (unless (helixel--end-of-line-p)
-      (forward-char)))
+      (forward-char))
+    (setq helixel--repeat-sel-ctx nil)))
+  (helixel--record-edit 'insert-text)
   (setq helixel--change-track-marker (point-marker))
-  (when (eq helixel-repeat-change-method 'keys)
-    (setq helixel--insert-keys t))
-  (helixel--switch-state 'insert))
+  (helixel--enter-insert))
 
 (helixel-define-command helixel-insert-beginning-line
-  (:category state :subcat insert :edit-op insert-text)
+    (:category state :subcat insert)
   (beginning-of-line)
+  (setq helixel--repeat-sel-ctx
+        (helixel-sel-create
+         'insert-beginning-line nil
+         #'helixel--recreate-insert-beginning-line "I"))
+  (helixel--record-edit 'insert-text)
   (setq helixel--change-track-marker (point-marker))
-  (when (eq helixel-repeat-change-method 'keys)
-    (setq helixel--insert-keys t))
-  (helixel--switch-state 'insert))
+  (helixel--enter-insert))
 
 (helixel-define-command helixel-insert-after-end-line
-  (:category state :subcat insert :edit-op insert-text)
+    (:category state :subcat insert)
   (end-of-line)
+  (setq helixel--repeat-sel-ctx
+        (helixel-sel-create
+         'insert-end-line nil
+         #'helixel--recreate-insert-end-line "A"))
+  (helixel--record-edit 'insert-text)
   (setq helixel--change-track-marker (point-marker))
-  (when (eq helixel-repeat-change-method 'keys)
-    (setq helixel--insert-keys t))
-  (helixel--switch-state 'insert))
+  (helixel--enter-insert))
 
 (helixel-define-command helixel-insert-newline
-  (:category state :subcat insert :edit-op insert-text)
+    (:category state :subcat insert :edit-op insert-text)
   (helixel--clear-data)
   (end-of-line)
   (newline-and-indent)
   (setq helixel--change-track-marker (point-marker))
-  (when (eq helixel-repeat-change-method 'keys)
-    (setq helixel--insert-keys t))
-  (helixel--switch-state 'insert))
+  (helixel--enter-insert))
 
 (helixel-define-command helixel-insert-prevline
-  (:category state :subcat insert :edit-op insert-text)
+    (:category state :subcat insert :edit-op insert-text)
   (helixel--clear-data)
   (beginning-of-line)
   (let ((electric-indent-mode nil))
@@ -709,9 +808,7 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
     (call-interactively #'previous-line)
     (indent-according-to-mode))
   (setq helixel--change-track-marker (point-marker))
-  (when (eq helixel-repeat-change-method 'keys)
-    (setq helixel--insert-keys t))
-  (helixel--switch-state 'insert))
+  (helixel--enter-insert))
 
 (defun helixel--replace-region (start end text)
   "Replace region from START to END in-place with TEXT."
@@ -732,7 +829,7 @@ If no region is active, replace character at point."
     (helixel--replace-region (point) (1+ (point)) char)))
 
 (helixel-define-command helixel-replace
-  (:category edit :subcat replace :edit-op replace)
+    (:category edit :subcat replace :edit-op replace)
   (if (= 0 (length kill-ring))
       (message "nothing to yank")
     (let* ((text (current-kill 0 t))
@@ -763,15 +860,15 @@ If no region is active, replace character at point."
                     bare
                   (substring-no-properties text))))
        ;; No region — replace char at point
-        (t
-         (when helixel-replace-delete-char-p
-           (delete-char 1))
-         (let ((helixel--inhibit-repeat-record t))
-           (helixel-yank))))
+       (t
+        (when helixel-replace-delete-char-p
+          (delete-char 1))
+        (let ((helixel--inhibit-repeat-record t))
+          (helixel-yank))))
       (helixel--clear-data))))
 
 (helixel-define-command helixel-kill-ring-save
-  (:category edit :subcat copy :edit-op copy)
+    (:category edit :subcat copy :edit-op copy)
   (when (use-region-p)
     (cond
      ((eq (helixel--selection-type) 'rect)
@@ -786,7 +883,8 @@ If no region is active, replace character at point."
   (helixel--clear-data))
 
 (helixel-define-command helixel-yank
-  (:category edit :subcat paste-after :edit-op paste-after :params (&optional arg))
+    (:category edit :subcat paste-after :edit-op paste-after
+               :params (&optional arg))
   (interactive "*P")
   (cond
    ((helixel--rect-wise-kill-p)
@@ -802,7 +900,8 @@ If no region is active, replace character at point."
     (yank arg))))
 
 (helixel-define-command helixel-yank-before
-  (:category edit :subcat paste-before :edit-op paste-before :params (&optional arg))
+    (:category edit :subcat paste-before :edit-op paste-before
+               :params (&optional arg))
   (interactive "*P")
   (cond
    ((helixel--rect-wise-kill-p)
@@ -818,12 +917,12 @@ If no region is active, replace character at point."
     (yank arg))))
 
 (helixel-define-command helixel-indent-left
-  (:category edit :subcat indent-left :edit-op indent-left)
+    (:category edit :subcat indent-left :edit-op indent-left)
   (call-interactively #'indent-rigidly-left)
   (helixel--clear-data))
 
 (helixel-define-command helixel-indent-right
-  (:category edit :subcat indent-right :edit-op indent-right)
+    (:category edit :subcat indent-right :edit-op indent-right)
   (call-interactively #'indent-rigidly-right)
   (helixel--clear-data))
 
@@ -927,6 +1026,7 @@ Example with multiple callbacks:
     (define-key keymap "p" #'helixel-yank)
     (define-key keymap "P" #'helixel-yank-before)
     (define-key keymap "." #'helixel-repeat-edit)
+    (define-key keymap "," #'helixel-repeat-selection)
 
     (define-key keymap "x" #'helixel-select-line)
     (define-key keymap "v" #'helixel-begin-selection)
@@ -1175,10 +1275,12 @@ to composed keymaps with mode overrides on top of the base maps."
       (make-local-variable 'helixel-textobj-map)
       (when inner-overrides
         (define-key helixel-textobj-map "i"
-          (make-composed-keymap inner-overrides helixel-textobj-inner-map)))
+                    (make-composed-keymap inner-overrides
+                                          helixel-textobj-inner-map)))
       (when outer-overrides
         (define-key helixel-textobj-map "a"
-          (make-composed-keymap outer-overrides helixel-textobj-outer-map))))))
+                    (make-composed-keymap outer-overrides
+                                          helixel-textobj-outer-map))))))
 
 (define-minor-mode helixel-insert-state
   "Helixel INSERT state minor mode."
@@ -1190,9 +1292,7 @@ to composed keymaps with mode overrides on top of the base maps."
   (if helixel-insert-state
       (progn
         (setq-local helixel--current-state 'insert)
-        (setq cursor-type 'bar)
-        (add-hook 'post-command-hook #'helixel--record-insert-key nil t))
-    (remove-hook 'post-command-hook #'helixel--record-insert-key t)
+        (setq cursor-type 'bar))
     (setq-local helixel--current-state 'normal)))
 
 ;;;###autoload
@@ -1332,38 +1432,125 @@ Argument STATUS is passed through to `helixel-mode-maybe-activate'."
 (helixel-define-jump-command 'eglot-find-typeDefinition)
 (helixel-define-jump-command 'eglot-find-implementation)
 
-;; ---------------------------------------------------------------------------
-;; Selection-descriptor methods (see `helixel-sel-recreate' in helixel-edit.el)
-;;
-;; Producers below set (:kind line :count N) / (:kind rect :count N) without
-;; needing to embed a function reference.  These methods own replay for those
-;; kinds.  Legacy `:fn'-bearing descriptors still work via the default method.
-
-(cl-defmethod helixel-sel-recreate ((_kind (eql line)) ctx)
+(defun helixel--recreate-line (ctx)
   "Replay a linewise selection from CTX.
-\(:count N) controls the number of lines; \(:dir up) selects upward
-via `helixel-select-line-up', default is downward."
-  (let ((n (or (plist-get ctx :count) 1)))
-    (if (eq (plist-get ctx :dir) 'up)
+When :entry-kind is present (insert ops), position cursor
+at the appropriate offset on the selected line:
+  :entry-kind insert \=`region-beginning' + cursor-offset
+  :entry-kind append \=`region-end' + cursor-offset"
+  (let ((n (helixel-sel-line-count ctx))
+        (entry-kind (plist-get ctx :entry-kind)))
+    (if (eq (helixel-sel-line-dir ctx) 'backward)
         (helixel-select-line-up n)
-      (helixel-select-line n))))
+      (helixel-select-line n))
+    (when entry-kind
+      ;; Position cursor for key/text insertion.
+      (goto-char (if (eq entry-kind 'append)
+                     (line-end-position)
+                   (line-beginning-position)))
+      (let ((off (helixel-sel-insert-cursor-offset ctx)))
+        (when off (forward-char off))))))
 
-(cl-defmethod helixel-sel-display ((_kind (eql line)) ctx)
-  "Render line selection CTX as \"L\" or \"L^\" (upward)."
-  (if (eq (plist-get ctx :dir) 'up) "L^" "L"))
+(defun helixel--recreate-rect (ctx)
+  "Replay a rectangular selection from CTX."
+  (let ((n (helixel-sel-rect-count ctx)))
+    (unless rectangle-mark-mode
+      (helixel--switch-state 'visual)
+      (push-mark (point) t t)
+      (rectangle-mark-mode 1))
+    (dotimes (_ (1- n))
+      (forward-line 1)
+      (rectangle--reset-point-crutches))
+    (setq helixel--selection-type 'rect)))
 
-(cl-defmethod helixel-sel-display ((_kind (eql rect)) _ctx)
-  "Render rectangular selection as the literal \"rect\"."
-  "rect")
+(defun helixel--recreate-movement (ctx)
+  "Replay movement selection from CTX."
+  (let ((helixel--current-state 'visual))
+    (dolist (m (reverse (helixel-sel-movement-moves ctx)))
+      (dotimes (_ (cdr m))
+        (funcall (car m))))))
 
-(cl-defmethod helixel-sel-display ((_kind (eql movement)) ctx)
-  "Render movement CTX as \"vN\" where N is the total move count."
-  (let ((n (apply #'+ (mapcar #'cdr (plist-get ctx :moves)))))
-    (format "v%d" n)))
+(defun helixel--recreate-search (ctx)
+  "Replay search selection from CTX.
+Finds the next match, activates the region on it.
+If CTX has :entry-kind (insert or append), positions the cursor
+at the appropriate offset within the match for insert-text ops.
+For insert operations, skips past a current match if point
+sits on the pattern start so chained `.` advances correctly."
+  (let* ((pat (helixel-sel-search-pattern ctx))
+         (dir (helixel-sel-search-dir ctx)))
+    (unless pat
+      (user-error "No search pattern to repeat"))
+    ;; For insert ops, skip past the current match if point sits on
+    ;; or near it.  Insert ops preserve the match text (e.g. iX →
+    ;; Xhello still contains "hello"), so `.` would otherwise re-find
+    ;; the same match.  Change ops delete the match so no skip needed.
+    ;;
+    ;; Two cases: point at match-start (i after search) → looking-at
+    ;; succeeds; point at match-end (a after search) → looking-at
+    ;; fails but a backward search from point finds the match ending
+    ;; nearby.
+    (when (and (helixel-sel-search-entry-kind ctx)
+               (let ((orig (point)))
+                 (or (looking-at pat)
+                     (save-excursion
+                       (condition-case nil
+                           (progn
+                             (helixel-search--search
+                              pat 'backward)
+                             (<= (- orig (match-end 0))
+                                 (length pat)))
+                         (search-failed nil))))))
+      (if (eq dir 'backward)
+          ;; Backward: go before match-beginning to skip this match.
+          (goto-char (max (point-min)
+                          (1- (match-beginning 0))))
+        ;; Forward: go to match-end to skip this match.
+        (goto-char (match-end 0))))
+    (condition-case nil
+        (helixel-search--search pat dir)
+      (search-failed
+       (user-error "Search pattern not found: %s" pat)))
+    (push-mark (match-beginning 0) t t)
+    (goto-char (match-end 0))
+    (setq helixel--selection-type 'char)
+    ;; For insert operations: position cursor within the match
+    (when-let* ((entry-kind (helixel-sel-search-entry-kind ctx)))
+      (let* ((base (if (eq entry-kind 'append)
+                       (match-end 0)
+                     (match-beginning 0)))
+             (cursor-offset (or (helixel-sel-search-cursor-offset ctx) 0)))
+        (goto-char (+ base cursor-offset))))))
 
-(cl-defmethod helixel-sel-recreate ((_kind (eql rect)) ctx)
-  "Replay a rectangular selection from CTX (uses \\(:count N) rows)."
-  (helixel-select-rectangle (or (plist-get ctx :count) 1)))
+(defun helixel--recreate-insert-selection-start (ctx)
+  "Replay insert-selection-start.  CTX holds :cursor-offset (int or nil)."
+  (goto-char (region-beginning))
+  (let ((off (helixel-sel-insert-cursor-offset ctx)))
+    (when off (forward-char off))))
+
+(defun helixel--recreate-insert-selection-end (ctx)
+  "Replay insert-selection-end.  CTX holds :cursor-offset (int or nil)."
+  (goto-char (region-end))
+  (let ((off (helixel-sel-insert-cursor-offset ctx)))
+    (when off (forward-char off))))
+
+(defun helixel--recreate-insert-beginning-line (_ctx)
+  "Replay insert-beginning-line.  CTX is ignored."
+  (beginning-of-line))
+
+(defun helixel--recreate-insert-end-line (_ctx)
+  "Replay insert-end-line.  CTX is ignored."
+  (end-of-line))
+
+(defun helixel--recreate-insert-search-offset (ctx)
+  "Replay insert-search-offset.  CTX holds :offset (integer)."
+  (let ((offset (helixel-sel-insert-offset ctx)))
+    (goto-char (+ (match-beginning 0) offset))))
+
+;; ---------------------------------------------------------------------------
+;; Selection-descriptor producers
+;;
+;; All producers now create `helixel-sel' structs with stored closures.
 
 ;; ---------------------------------------------------------------------------
 ;; Edit-op runners (registry consumers — see `helixel-edit-defop')
@@ -1374,56 +1561,62 @@ via `helixel-select-line-up', default is downward."
 ;; knowledge of specific operators.
 
 (defun helixel--repeat-change-core (tx)
-  "Repeat change: kill selection, insert stored text or replay keys.
-Uses `helixel-repeat-change-method': `keys' replays the raw key
-sequence via `helixel--execute-keys' so abbrev/yasnippet/electric-indent
-fire again; `text' (default) inserts the recorded string."
-  (let* ((keys (when (eq helixel-repeat-change-method 'keys)
-                 (helixel--repeat-get-keys tx)))
+  "Repeat change TX: delete selection, replay kmacro keys or insert text.
+TX is the complete edit transaction (see `helixel-edit-make').
+Kmacro keys/commands (primary) capture the full insert-mode keystrokes.
+Text (fallback) is used when keys/commands are unavailable (tests).
+
+For rect selections the stored text is replayed on every subsequent
+rectangle line via `helixel--rect-replay' — no state-switching side
+-effect (avoids an unnecessary helixel-insert-exit during replay)."
+  (let* ((keys (helixel--repeat-get-keys tx))
+         (cmds (plist-get (helixel-edit-payload tx) :commands))
          (text (plist-get (helixel-edit-payload tx) :inserted-text)))
     (cond
      ((and (use-region-p) (eq (helixel--selection-type) 'rect))
       (helixel--rect-change)
-      (if keys
-          (helixel--execute-keys keys)
+      (if (or keys cmds)
+          (helixel--execute-keys keys cmds)
         (when text (insert text)))
-      (helixel-insert-exit))
+      (helixel--rect-replay))
      (t
       (helixel--delete-selection)
-      (if keys
-          (helixel--execute-keys keys)
+      (if (or keys cmds)
+          (helixel--execute-keys keys cmds)
         (when text (insert text)))))))
 
-(helixel-edit-defop kill          :display "d"
-  :runner (lambda (_tx) (helixel-kill-thing-at-point)))
-(helixel-edit-defop change        :display "c"
-  :runner #'helixel--repeat-change-core)
-(helixel-edit-defop copy          :display "y"
-  :runner (lambda (_tx) (helixel-kill-ring-save)))
-(helixel-edit-defop replace       :display "r"
-  :runner (lambda (_tx) (helixel-replace)))
-(helixel-edit-defop replace-char
+(helixel-edit-defop kill          :display "d" :repeat-advance nil
+                    :runner (lambda (_tx) (helixel-kill-thing-at-point)))
+(helixel-edit-defop change        :display "c" :repeat-advance nil
+                    :runner #'helixel--repeat-change-core)
+(helixel-edit-defop copy          :display "y" :repeat-advance 'line
+                    :runner (lambda (_tx) (helixel-kill-ring-save)))
+(helixel-edit-defop replace       :display "r" :repeat-advance 'line
+                    :runner (lambda (_tx) (helixel-replace)))
+(helixel-edit-defop replace-char  :repeat-advance 'line
   :display (lambda (tx)
              (let ((c (plist-get (helixel-edit-payload tx) :char)))
                (if c (format "R[%c]" c) "R")))
   :runner (lambda (tx)
             (helixel-replace-char
              (plist-get (helixel-edit-payload tx) :char))))
-(helixel-edit-defop paste-after   :display "p"
-  :runner (lambda (_tx) (helixel-yank)))
-(helixel-edit-defop paste-before  :display "P"
-  :runner (lambda (_tx) (helixel-yank-before)))
-(helixel-edit-defop indent-left   :display "<"
-  :runner (lambda (_tx) (helixel-indent-left)))
-(helixel-edit-defop indent-right  :display ">"
-  :runner (lambda (_tx) (helixel-indent-right)))
-(helixel-edit-defop insert-text   :display "i"
+(helixel-edit-defop paste-after   :display "p" :repeat-advance 'line
+                    :runner (lambda (_tx) (helixel-yank)))
+(helixel-edit-defop paste-before  :display "P" :repeat-advance 'line
+                    :runner (lambda (_tx) (helixel-yank-before)))
+(helixel-edit-defop indent-left   :display "<" :repeat-advance 'line
+                    :runner (lambda (_tx) (helixel-indent-left)))
+(helixel-edit-defop indent-right  :display ">" :repeat-advance 'line
+                    :runner (lambda (_tx) (helixel-indent-right)))
+(helixel-edit-defop insert-text   :display "i" :repeat-advance 'line
   :runner (lambda (tx)
-            (let ((keys (when (eq helixel-repeat-change-method 'keys)
-                          (helixel--repeat-get-keys tx))))
-              (if keys
-                  (helixel--execute-keys keys)
-                (insert (or (plist-get (helixel-edit-payload tx) :text) ""))))))
+            (let ((keys (plist-get (helixel-edit-payload tx) :keys))
+                  (cmds (plist-get (helixel-edit-payload tx) :commands)))
+              (if (or keys cmds)
+                  (progn (deactivate-mark)
+                         (helixel--execute-keys keys cmds))
+                (insert (or (plist-get (helixel-edit-payload tx) :text)
+                            ""))))))
 
 (provide 'helixel-common)
 ;;; helixel-common.el ends here

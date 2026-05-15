@@ -1186,11 +1186,20 @@ the same multiplier."
   (when range
     (push-mark (car range) nil t)
     (goto-char (if (consp (cdr range)) (cadr range) (cdr range)))
-    (setq helixel--selection-type 'textobj
-          helixel--repeat-sel-ctx
-          (list :kind 'textobj :command this-command
-                :count (or count 1)
-                :delimiter delimiter))))
+    (let ((cmd this-command)
+          (n (or count 1))
+          (delim delimiter))
+      (setq helixel--selection-type 'textobj
+            helixel--repeat-sel-ctx
+            (helixel-sel-create
+             'textobj `(:command ,cmd :count ,n :delimiter ,delim)
+             #'helixel--recreate-textobj
+             ;; display closure
+             (lambda (c)
+               (if-let* ((command (helixel-sel-textobj-command c)))
+                   (replace-regexp-in-string "^helixel-mark-" ""
+                                            (symbol-name command))
+                 "textobj")))))))
 
 
 (defun helixel-select-xml-tag (beg end type &optional count inclusive)
@@ -1363,7 +1372,7 @@ contains the block name (1-based)."
          (combined-re (concat "\\(" begin-re "\\)\\|\\(" end-re "\\)")))
     (catch 'done
       (while (> count 0)
-        ;; Phase 1: find the target closer/opener
+        ;; Step 1: find the target closer/opener
         (while
             (and (setq match (re-search-forward combined-re nil t dir))
                  (cond
@@ -1387,7 +1396,7 @@ contains the block name (1-based)."
         (unless (setq match (and match (match-data t)))
           (setq match nil)
           (throw 'done count))
-        ;; Phase 2: find the matching counterpart from target position
+        ;; Step 2: find the matching counterpart from target position
         (cond
          ((> dir 0)
           (setq pnt (match-end 0))
@@ -1398,7 +1407,7 @@ contains the block name (1-based)."
         (let* ((balanced-re (concat "\\(" begin-re "\\)\\|\\(" end-re "\\)"))
                (cnt 1))
           ;; Search for both begin and end, using the same formula as
-          ;; helixel-up-xml-tag Phase 2.  Nesting is tracked purely by
+          ;; helixel-up-xml-tag step 2.  Nesting is tracked purely by
           ;; the counter; names do not need filtering because the
           ;; begin/end alternation alone correctly balances nested
           ;; blocks in well-formed documents.
@@ -2000,19 +2009,26 @@ Example:
   "'"  #'helixel-mark-a-single-quote
   "\"" #'helixel-mark-a-double-quote)
 
-(cl-defmethod helixel-sel-recreate ((_kind (eql textobj)) ctx)
-  "Replay a textobj selection by re-invoking the recorded :command.
-CTX has shape (:kind textobj :command SYMBOL :count N [:delimiter D]).
-The command symbol is one of the helixel-mark-{inner,a}-* defuns and
-accepts a single optional COUNT argument."
-  (when-let* ((cmd (plist-get ctx :command)))
-    (funcall cmd (or (plist-get ctx :count) 1))))
 
-(cl-defmethod helixel-sel-display ((_kind (eql textobj)) ctx)
-  "Render CTX as the textobj command name without the `helixel-mark-' prefix."
-  (if-let* ((cmd (plist-get ctx :command)))
-      (replace-regexp-in-string "^helixel-mark-" "" (symbol-name cmd))
-    "textobj"))
+
+(defun helixel--recreate-textobj (ctx)
+  "Replay a textobj selection from CTX.
+Skips forward over whitespace when not in region mode."
+  (when-let* ((command (helixel-sel-textobj-command ctx))
+              (cnt (helixel-sel-textobj-count ctx)))
+    (unless (region-active-p)
+      (when (looking-at-p "[ \t\n\r\f]")
+        (skip-chars-forward " \t\n\r\f")))
+    (condition-case nil
+        (funcall command cnt)
+      (error
+       (save-match-data
+         (let ((orig (point)))
+           (forward-word 1)
+           (when (= (point) orig)
+             (forward-char 1))
+           (funcall command cnt))))))
+  (setq helixel--selection-type 'textobj))
 
 (provide 'helixel-textobj)
 ;;; helixel-textobj.el ends here
