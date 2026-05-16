@@ -242,14 +242,17 @@ Supports `line' and `rect'."
     (:op kill :display "d" :repeat-advance nil)
   (helixel--record-edit 'kill)
   (helixel--delete-selection)
+  (helixel--register-consume)
   (helixel--clear-data))
 
 (helixel-define-command helixel-change-thing-at-point
     (:category edit :subcat change)
   (helixel--record-edit 'change)
   (if (and (use-region-p) (eq (helixel--selection-type) 'rect))
-      (helixel--rect-change)
+      (progn (helixel--rect-change)
+             (helixel--register-consume))
     (helixel--delete-selection)
+    (helixel--register-consume)
     (setq helixel--change-track-marker (point-marker))
     (helixel--enter-insert)))
 
@@ -263,9 +266,10 @@ Used to support cycling through the kill ring after a replace.")
 (helixel-define-operator helixel-replace
     (:op replace :display "r" :repeat-advance 'line)
   (helixel--record-edit 'replace)
-  (if (= 0 (length kill-ring))
+  (if (and (not (helixel--register-active-p))
+           (= 0 (length kill-ring)))
       (message "nothing to yank")
-    (let* ((text (current-kill 0 t))
+    (let* ((text (or (helixel--current-kill 0 t) (current-kill 0 t)))
            (linewise-p (helixel--linewise-kill-p text))
            (rectwise-p (helixel--rect-wise-kill-p text))
            (bare (string-trim-right (substring-no-properties text) "\n"))
@@ -309,6 +313,7 @@ Used to support cycling through the kill ring after a replace.")
           (helixel-yank))
         (setq helixel--replace-pop-bounds
               (cons pop-start (point)))))
+      (helixel--register-consume)
       (helixel--clear-data))))
 
 ;; `helixel-replace-pop' replaces the text inserted by the previous
@@ -330,7 +335,7 @@ Used to support cycling through the kill ring after a replace.")
   (let* ((beg (car helixel--replace-pop-bounds))
          (end (cdr helixel--replace-pop-bounds))
          (inhibit-read-only t)
-         (text (current-kill arg))
+         (text (helixel--current-kill arg))
          (ends-with-newline (char-equal (char-before end) ?\n)))
     (delete-region beg end)
     (goto-char beg)
@@ -350,13 +355,15 @@ Used to support cycling through the kill ring after a replace.")
     (cond
      ((eq (helixel--selection-type) 'rect)
       (let ((lines (extract-rectangle (region-beginning) (region-end))))
-        (kill-new (helixel--rect-wise-text lines))))
+        (helixel--kill-new (helixel--rect-wise-text lines) :copy)))
      ((eq (helixel--selection-type) 'line)
       (when-let* ((bounds (helixel--line-bounds-of-region))
                   (text (filter-buffer-substring (car bounds) (cdr bounds))))
-        (kill-new (helixel--linewise-text text))))
+        (helixel--kill-new (helixel--linewise-text text) :copy)))
      (t
-      (call-interactively #'kill-ring-save))))
+      (helixel--kill-new
+       (filter-buffer-substring (region-beginning) (region-end)) :copy))))
+  (helixel--register-consume)
   (helixel--clear-data))
 
 ;; ── Yank ──
@@ -366,36 +373,44 @@ Used to support cycling through the kill ring after a replace.")
      :params (&optional arg))
   (interactive "*P")
   (helixel--record-edit 'paste-after)
-  (cond
-   ((helixel--rect-wise-kill-p)
-    (let ((lines (nth 1 (get-text-property
-                         0 'yank-handler
-                         (current-kill 0 t)))))
-      (if lines
-          (insert-rectangle lines)
-        (insert-for-yank (current-kill 0 t)))))
-   ((helixel--linewise-kill-p)
-    (insert-for-yank (current-kill 0 t)))
-   (t
-    (yank arg))))
+  (prog1
+      (cond
+       ((helixel--rect-wise-kill-p)
+        (let* ((text (helixel--current-kill 0 t))
+               (lines (when text
+                        (nth 1 (get-text-property
+                                0 'yank-handler text)))))
+          (if lines
+              (insert-rectangle lines)
+            (when text (insert-for-yank text)))))
+       ((helixel--linewise-kill-p)
+        (let ((text (helixel--current-kill 0 t)))
+          (when text (insert-for-yank text))))
+       (t
+        (helixel--yank arg)))
+    (helixel--register-consume)))
 
 (helixel-define-operator helixel-yank-before
     (:op paste-before :display "P" :repeat-advance 'line
      :params (&optional arg))
   (interactive "*P")
   (helixel--record-edit 'paste-before)
-  (cond
-   ((helixel--rect-wise-kill-p)
-    (let ((lines (nth 1 (get-text-property
-                         0 'yank-handler
-                         (current-kill 0 t)))))
-      (if lines
-          (insert-rectangle lines)
-        (insert-for-yank (current-kill 0 t)))))
-   ((helixel--linewise-kill-p)
-    (insert-for-yank (current-kill 0 t)))
-   (t
-    (yank arg))))
+  (prog1
+      (cond
+       ((helixel--rect-wise-kill-p)
+        (let* ((text (helixel--current-kill 0 t))
+               (lines (when text
+                        (nth 1 (get-text-property
+                                0 'yank-handler text)))))
+          (if lines
+              (insert-rectangle lines)
+            (when text (insert-for-yank text)))))
+       ((helixel--linewise-kill-p)
+        (let ((text (helixel--current-kill 0 t)))
+          (when text (insert-for-yank text))))
+       (t
+        (helixel--yank arg)))
+    (helixel--register-consume)))
 
 ;; ── Indent ──
 

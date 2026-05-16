@@ -34,6 +34,7 @@
 ;;; Code:
 
 (require 'helixel-action)
+(require 'helixel-register)
 (require 'helixel-common)
 (require 'helixel-keymap)
 (require 'helixel-search)

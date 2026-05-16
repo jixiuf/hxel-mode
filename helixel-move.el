@@ -348,7 +348,10 @@ Ensures TEXT ends with a newline."
 
 (defun helixel--linewise-kill-p (&optional text)
   "Return non-nil if TEXT (default: top of kill ring) was killed line-wise."
-  (when-let* ((s (or text (and kill-ring (current-kill 0 t)))))
+  (when-let* ((s (or text
+                     (and helixel--current-register
+                          (helixel--current-kill 0 t))
+                     (and kill-ring (helixel--current-kill 0 t)))))
     (eq (car-safe (get-text-property 0 'yank-handler s))
         'helixel--yank-handler-line-wise)))
 
@@ -377,7 +380,10 @@ Tags the text with a rect-wise yank-handler for proper pasting."
 
 (defun helixel--rect-wise-kill-p (&optional text)
   "Return non-nil if TEXT was killed as a rectangle."
-  (when-let* ((s (or text (and kill-ring (current-kill 0 t)))))
+  (when-let* ((s (or text
+                     (and helixel--current-register
+                          (helixel--current-kill 0 t))
+                     (and kill-ring (helixel--current-kill 0 t)))))
     (eq (car-safe (get-text-property 0 'yank-handler s))
         'helixel--yank-handler-rect-wise)))
 
@@ -398,7 +404,7 @@ Replay typed text on all rectangle lines."
          (col (save-excursion (goto-char beg) (current-column)))
          (lines (extract-rectangle beg end)))
     (delete-rectangle beg end)
-    (kill-new (helixel--rect-wise-text lines))
+    (helixel--kill-new (helixel--rect-wise-text lines))
     (goto-char beg)
     (setq helixel--rect-replay-marker (point-marker))
     (setq helixel--rect-replay-data `(:col ,col :line-count ,line-count))

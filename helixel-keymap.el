@@ -109,6 +109,7 @@
 (define-key helixel-normal-map "\M-r" #'helixel-replace-pop)
 (define-key helixel-normal-map "p" #'helixel-yank)
 (define-key helixel-normal-map "P" #'helixel-yank-before)
+(define-key helixel-normal-map "\"" #'helixel-select-register)
 (define-key helixel-normal-map "." #'helixel-repeat-edit)
 (define-key helixel-normal-map "," #'helixel-repeat-selection)
 (define-key helixel-normal-map "x" #'helixel-select-line)

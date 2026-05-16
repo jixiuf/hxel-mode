@@ -48,6 +48,9 @@
 (require 'cl-lib)
 (require 'helixel-edit)
 
+(defvar helixel--inhibit-action-track)
+(defvar helixel--selection-type)
+
 ;; ── Custom group ──
 
 (defgroup helixel nil

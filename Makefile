@@ -1,7 +1,7 @@
 EMACS ?= emacs
 
-FILES = helixel-action.el helixel-edit.el helixel-repeat.el helixel-state.el helixel-move.el helixel-keymap.el helixel-common.el helixel-search.el helixel-delimiter.el helixel-surround.el helixel-textobj.el helixel.el
-ELS := helixel-action.elc helixel-edit.elc helixel-repeat.elc helixel-state.elc helixel-move.elc helixel-keymap.elc helixel-common.elc helixel-search.elc helixel-delimiter.elc helixel-surround.elc helixel-textobj.elc helixel.elc
+FILES = helixel-action.el helixel-edit.el helixel-repeat.el helixel-register.el helixel-state.el helixel-move.el helixel-keymap.el helixel-common.el helixel-search.el helixel-delimiter.el helixel-surround.el helixel-textobj.el helixel.el
+ELS := helixel-action.elc helixel-edit.elc helixel-repeat.elc helixel-register.elc helixel-state.elc helixel-move.elc helixel-keymap.elc helixel-common.elc helixel-search.elc helixel-delimiter.elc helixel-surround.elc helixel-textobj.elc helixel.elc
 
 DEPS = package-lint
 
@@ -22,7 +22,7 @@ EMACS_BATCH=${EMACS} -Q -batch -L . --eval ${INIT_PACKAGES}
 
 all: clean-elc compile lint test
 
-compile: $(ELC)
+compile: $(ELS)
 
 %.elc: %.el
 	$(EMACS) --batch -Q  -L . --eval "(setq byte-compile-error-on-warn t)" \

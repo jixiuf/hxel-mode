@@ -37,6 +37,7 @@
 (require 'cl-lib)
 (require 'helixel-action)
 (require 'helixel-repeat)
+(require 'helixel-register)
 (require 'helixel-textobj)
 
 (declare-function helixel-surround-add "helixel-surround")
@@ -490,21 +491,24 @@ Used as the shared kill core by `helixel-kill-thing-at-point',
 `helixel-change-thing-at-point', and `helixel--repeat-change-core'."
   (cond
    ((not (use-region-p))
+    (helixel--kill-new (char-to-string (char-after)))
     (delete-char 1))
    ((eq (helixel--selection-type) 'rect)
     (let ((lines (extract-rectangle (region-beginning) (region-end))))
       (delete-rectangle (region-beginning) (region-end))
-      (kill-new (helixel--rect-wise-text lines))))
+      (helixel--kill-new (helixel--rect-wise-text lines))))
    ((eq (helixel--selection-type) 'line)
     (if-let* ((bounds (helixel--line-bounds-of-region))
               (text (filter-buffer-substring (car bounds) (cdr bounds))))
         (progn
-          (kill-new (helixel--linewise-text text))
+          (helixel--kill-new (helixel--linewise-text text))
           (delete-region (car bounds) (cdr bounds)))))
    (t
     (when (and (eolp) (<= (region-beginning) (pos-bol)))
       (forward-visible-line 1))
-    (kill-region (region-beginning) (region-end)))))
+    (helixel--kill-new
+     (filter-buffer-substring (region-beginning) (region-end)))
+    (delete-region (region-beginning) (region-end)))))
 
 ;; ── Keymap management ──
 
