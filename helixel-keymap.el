@@ -97,6 +97,10 @@
 ;; ── State keymaps ──
 
 ;; helixel-normal-map
+;; Macro recording & playback (q = start/insert-counter, @ = end/call)
+(define-key helixel-normal-map "q" #'kmacro-start-macro-or-insert-counter)
+(define-key helixel-normal-map "@" #'kmacro-end-or-call-macro)
+
 (define-key helixel-normal-map "c" #'helixel-change-thing-at-point)
 (define-key helixel-normal-map "d" #'helixel-kill-thing-at-point)
 (define-key helixel-normal-map "y" #'helixel-kill-ring-save)
