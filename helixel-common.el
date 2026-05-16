@@ -411,7 +411,9 @@ Used to support cycling through the kill ring after a replace.")
 ;; ── Case operations ──
 
 (helixel-define-command helixel-toggle-case
-    (:repeatable "~" :subcat case)
+    (:repeatable "~" :subcat case :params (&optional count)
+     :record-payload (:count (or count 1)))
+  (interactive "p")
   (if (use-region-p)
       (let ((text (buffer-substring (region-beginning) (region-end))))
         (delete-region (region-beginning) (region-end))
@@ -419,23 +421,30 @@ Used to support cycling through the kill ring after a replace.")
                              (char-to-string
                               (if (eq c (upcase c)) (downcase c) (upcase c))))
                            text "")))
-    (let ((c (following-char)))
-      (delete-char 1)
-      (insert (if (eq c (upcase c)) (downcase c) (upcase c)))))
+    (dotimes (_ (or count 1))
+      (let ((c (following-char)))
+        (delete-char 1)
+        (insert (if (eq c (upcase c)) (downcase c) (upcase c))))))
   (helixel--clear-data))
 
 (helixel-define-command helixel-downcase
-    (:repeatable "gu" :repeat-advance 'line :subcat case)
+    (:repeatable "gu" :repeat-advance 'line :subcat case
+     :params (&optional count)
+     :record-payload (:count (or count 1)))
+  (interactive "p")
   (if (use-region-p)
       (downcase-region (region-beginning) (region-end))
-    (downcase-word 1))
+    (downcase-word (or count 1)))
   (helixel--clear-data))
 
 (helixel-define-command helixel-upcase
-    (:repeatable "gU" :repeat-advance 'line :subcat case)
+    (:repeatable "gU" :repeat-advance 'line :subcat case
+     :params (&optional count)
+     :record-payload (:count (or count 1)))
+  (interactive "p")
   (if (use-region-p)
       (upcase-region (region-beginning) (region-end))
-    (upcase-word 1))
+    (upcase-word (or count 1)))
   (helixel--clear-data))
 
 ;; ── Comment toggle ──
