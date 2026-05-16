@@ -440,9 +440,10 @@ Replay typed text on all rectangle lines."
   (helixel--record-edit 'replace-char :char char)
   (if (use-region-p)
       (helixel--replace-region
-       (region-beginning) (region-end)
-       (make-string (- (region-end) (region-beginning)) char))
-    (helixel--replace-region (point) (1+ (point)) char)))
+       (make-string (- (region-end) (region-beginning)) char)
+       (region-beginning) (region-end))
+    (helixel--replace-region
+     (char-to-string char) (point) (1+ (point)))))
 
 (provide 'helixel-move)
 ;;; helixel-move.el ends here

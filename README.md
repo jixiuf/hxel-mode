@@ -39,6 +39,7 @@ Requires Emacs >= 29.1.
 | `i` `a` `I` `A` `o` `O` | Enter insert mode |
 | `v` | Enter visual mode |
 | `d` `c` `y` `r` `R` | Edit: delete, change, copy, replace, replace-char |
+| `S` | Swap regions (see [Swap](#swap)) |
 | `p` `P` | Paste after / before |
 | `<` `>` | Indent left / right |
 | `u` `U` | Undo / redo |
@@ -96,6 +97,81 @@ entries for the same MODE are tried; the tightest enclosing block wins.
 `NAME-GROUP` nil means counter-based balancing (fences), an integer
 means name-based (org blocks).  Fallback patterns can be added via
 `helixel-block-textobj-fallback-alist`.
+
+### Swap
+
+`S` swaps the active region with a **swap source** — text that was previously
+copied with `y`.  The swap source carries position metadata as a text property
+on the kill-ring entry, so swaps are position-aware.
+
+**Basic flow**:
+
+1. Select some text (e.g. `vw` to visually select a word)
+2. `y` to copy it (automatically stores position metadata)
+3. Select other text (or move to a new location)
+4. `S` to swap the two regions
+
+| Key | Behavior |
+|-----|----------|
+| `y` | Copy selection to `kill-ring` **and** store as swap source |
+| `S` | Swap active region with swap source (position-aware) |
+
+#### Implied region
+
+When `S` is pressed without an active region, a target region is **implied**
+starting at point.  The implied region's shape depends on the swap-source type:
+
+| Source type | Implied region |
+|-------------|----------------|
+| character-wise | Same character-length range starting at point |
+| line-wise | Same number of **full lines** starting from current line |
+| rect-wise | Same column span × same line count, starting from current column |
+
+Example: `x j j y` to yank 3 lines line-wise, then move elsewhere and `S` —
+3 full lines starting at the current line are swapped.
+
+#### Rectangle swap
+
+Rectangle selections swap line-by-line.  Each line pair is exchanged
+independently via `helixel--replace-region`, which skips common
+prefix/suffix characters to preserve column alignment where possible.
+
+**Line count differences**: by default the shorter rectangle is **extended**
+downward to match the longer one (new lines use the same column span).
+`C-u S` does the opposite — it **truncates** to `min(N,M)` lines.
+
+| | Default | `C-u S` |
+|---|---|---|
+| Line counts differ | `max(N,M)` — extend shorter | `min(N,M)` — truncate longer |
+
+**Width differences**: each line pair is swapped independently.  Matching
+leading/trailing characters (e.g. whitespace) are preserved; the varying
+middle portion naturally expands or shrinks the buffer.  No arbitrary padding
+or truncation is applied.
+
+#### Register integration
+
+| Key | Behavior |
+|-----|----------|
+| `"aS` | Swap with register `a` (position-aware if stored by `"a y`) |
+| `"0S` | Swap with last yanked text (register 0) |
+| `"1S` | Swap with last deleted text (register 1) |
+
+Registered text carries the same position metadata as the `kill-ring`, so
+`"aS` is also position-aware — the underlying swap logic is identical.
+The only difference is **which source** is read.
+
+#### Edge cases
+
+- **Cross-buffer**: `S` works across buffers.  The swap source markers carry
+  their native buffer; `S` reads the source text from that buffer and writes
+  the current region's text back to the same marker positions.  The removed
+  text becomes the new swap source (in the current buffer), so pressing `S`
+  in the source buffer completes the exchange.
+- **Overlapping regions**: signal a `user-error`.
+- **No source**: signal a `user-error` — use `y` first to create one.
+- **Rectangle at buffer end**: the implied rect extension stops at the
+  last line; if there aren't enough lines, `S` signals an error.
 
 ### Surround
 

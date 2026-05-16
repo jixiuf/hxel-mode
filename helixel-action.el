@@ -631,7 +631,7 @@ same-type command won't be dedup'd against the previous session."
 
 (defun helixel-register-jump (&optional category subcat)
   "Register current point as a jump position in `helixel--jump-list'.
-CATEGORY defaults to 'user, SUBCAT defaults to 'jump.
+CATEGORY defaults to \='user, SUBCAT defaults to \='jump.
 Call this from any command to make its start position reachable via
 `helixel-jump-backward' / `helixel-jump-forward'."
   (let ((cat (or category 'user))

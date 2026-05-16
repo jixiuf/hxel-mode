@@ -104,6 +104,7 @@
 (define-key helixel-normal-map "c" #'helixel-change-thing-at-point)
 (define-key helixel-normal-map "d" #'helixel-kill-thing-at-point)
 (define-key helixel-normal-map "y" #'helixel-kill-ring-save)
+(define-key helixel-normal-map "S" #'helixel-swap)
 (define-key helixel-normal-map "r" #'helixel-replace)
 (define-key helixel-normal-map "R" #'helixel-replace-char)
 (define-key helixel-normal-map "\M-r" #'helixel-replace-pop)

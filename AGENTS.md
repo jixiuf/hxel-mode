@@ -362,3 +362,28 @@ its own skip+find logic.
 Third-party kinds extend by adding to the alist:
   (add-to-list 'helixel-repeat-advance-alist
                '(my-kind . my-advance-fn))
+
+### 34. Swap source lives in text property, not overlay
+**Design**: `helixel-kill-ring-save` (`y`) attaches position metadata
+as a text property `'helixel-swap-source` on the copied string before
+calling `helixel--kill-new`.  The property is a plist:
+`(:beg marker :end marker :buffer buffer :type nil|line|rect)`.
+This flows through the entire register/kill-ring pipeline automatically.
+
+`helixel-swap` (`S`) extracts the property from the current kill-ring
+top or active register via `helixel--current-kill`.  If the markers are
+live and in the current buffer, it does a position-aware swap using
+`helixel--swap-from-source` / `helixel--swap-from-source-rect`.
+Otherwise (stale markers, cross-buffer) it falls back to text-based swap.
+
+**Register integration**: `"aS` reads swap-source from register `a`
+via `helixel--current-kill`.  With named registers, swap is text-based
+(exchanges text between region and register).  Without a register prefix,
+the kill-ring top's position metadata is used for position-aware swap.
+
+**Key functions**:
+- `helixel--swap-source-type` — broader type detection (includes
+  direct `rectangle-mark-mode` check, not just `helixel--selection-type`)
+- `helixel--swap-source-from-kill` — extracts + validates source from
+  current kill/register
+- `helixel--swap-source-valid-p` — marker liveness check

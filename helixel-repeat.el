@@ -729,10 +729,17 @@ Failure during replay is reported but does not discard the stored edit."
 
 (defun helixel-repeat-selection (&optional count)
   "Repeat the last selection without applying any edit (bound to `,`).
-Extracts the selection descriptor from `helixel--last-tx' and
-replays it at point.  In visual state extends the current selection;
-in normal state recreates it from scratch.
-With COUNT, passes it as the count for line/rect/textobj selections.
+Mirrors the advance-and-recreate behaviour of `.` (\[helixel-repeat-edit])
+without executing the operator.
+For operators with :repeat-advance (e.g. insert-text, replace-char)
+this advances to the next target before showing the selection;
+for operators without advance (e.g. kill, change) it recreates
+the selection in place.  Insert-text operators deactivate the mark
+so only the cursor position is shown.
+
+In visual state extends the current selection; in normal state
+recreates it from scratch.  With COUNT, repeats the step that many
+times.
 
 Sets `helixel--repeat-has-preview' so a subsequent `.` uses this
 region directly instead of recreating."
