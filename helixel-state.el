@@ -145,6 +145,13 @@ METADATA is a plist:
   :subcat        SUB  — action subcategory (word, kill, insert, etc.)
   :dir           DIR  — direction for n/N repeat context (forward, backward)
   :edit-op       OP   — calls (helixel--record-edit OP)
+  :repeatable    DISPLAY — auto-derive :edit-op from NAME, register op
+                    with DISPLAY string and a runner that re-calls NAME.
+                    Sets :category edit and :subcat to op name if unset.
+  :repeat-advance TAG — passed to `helixel-edit-defop' (nil, `line', fn).
+                    Only meaningful with :repeatable or :edit-op.
+  :record-payload FORM — plist form evaluated at runtime; result spliced
+                    as extra args to `helixel--record-edit'.
   :clear-highlights    — default t for :category movement, nil otherwise
   :params        PARAM-LIST  — optional function parameter list
                                 (e.g., (&optional count))
@@ -155,10 +162,19 @@ BODY is the command's business logic.
 If the body begins with (interactive ...), that form is extracted and placed
 before the tracking code; otherwise (interactive) is inserted automatically."
   (declare (indent 2))
-  (let* ((cat (plist-get metadata :category))
-         (sub (plist-get metadata :subcat))
+  (let* ((repeatable (plist-get metadata :repeatable))
+         (derived-op (when repeatable
+                       (intern (substring (symbol-name name)
+                                         (length "helixel-")))))
+         (cat (or (plist-get metadata :category)
+                  (when repeatable 'edit)))
+         (sub (or (plist-get metadata :subcat)
+                  derived-op))
          (dir (plist-get metadata :dir))
-         (op  (plist-get metadata :edit-op))
+         (op  (or (plist-get metadata :edit-op)
+                  derived-op))
+         (advance (plist-get metadata :repeat-advance))
+         (payload-form (plist-get metadata :record-payload))
          (clear (if (plist-member metadata :clear-highlights)
                     (plist-get metadata :clear-highlights)
                   (eq cat 'movement)))
@@ -170,24 +186,37 @@ before the tracking code; otherwise (interactive) is inserted automatically."
          (track-visual
           (when (eq cat 'movement)
             `((when (eq helixel--current-state 'visual)
-                (helixel--track-visual-move ',name))))))
-    `(defun ,name ,(or params ())
-       ,(format "Helixel %s.%s command." cat sub)
-       ,interactive-form
-       ;; ── Action tracking (for ; and C-o/C-i) ──
-       (helixel-action-start ',cat ',sub)
-       ;; ── Direction (for n/N repeat) ──
-       ,@(when dir `((helixel--live-cat-set-dir ',dir)))
-       ;; ── Edit recording (for . repeat) ──
-       ,@(when op  `((helixel--record-edit ',op)))
-       ;; ── Highlight clearing ──
-       ,@(when clear '((helixel--clear-highlights)))
-       ;; ── Body (pure business logic) ──
-       ,@rest-body
-       ;; ── Visual-mode tracking (for . replay of movements) ──
-       ;; Only movement commands accumulate moves; edit commands
-       ;; record the accumulated moves via `helixel--record-edit'.
-       ,@track-visual)))
+                (helixel--track-visual-move ',name)))))
+         ;; Build the record-edit call with optional extra payload.
+         (record-call
+          (when op
+            `((helixel--record-edit ',op ,@payload-form))))
+         ;; Build the edit-op registration form.
+         (defop-form
+          (when repeatable
+            `((helixel-edit-defop ,derived-op
+                :display ,repeatable
+                :runner (lambda (_tx) (,name))
+                ,@(when advance `(:repeat-advance ,advance)))))))
+    `(progn
+       ,@defop-form
+       (defun ,name ,(or params ())
+         ,(format "Helixel %s.%s command." cat sub)
+         ,interactive-form
+         ;; ── Action tracking (for ; and C-o/C-i) ──
+         (helixel-action-start ',cat ',sub)
+         ;; ── Direction (for n/N repeat) ──
+         ,@(when dir `((helixel--live-cat-set-dir ',dir)))
+         ;; ── Edit recording (for . repeat) ──
+         ,@record-call
+         ;; ── Highlight clearing ──
+         ,@(when clear '((helixel--clear-highlights)))
+         ;; ── Body (pure business logic) ──
+         ,@rest-body
+         ;; ── Visual-mode tracking (for . replay of movements) ──
+         ;; Only movement commands accumulate moves; edit commands
+         ;; record the accumulated moves via `helixel--record-edit'.
+         ,@track-visual))))
 
 ;; Wire textobj hooks for action recording and visual state detection.
 (setq helixel-textobj-action-function #'helixel-action-start)
