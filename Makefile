@@ -65,7 +65,7 @@ checkdoc:
 
 
 package-lint:
-	$(EMACS_BATCH) --eval "(package-initialize)" \
+	@$(EMACS_BATCH) --eval "(package-initialize)" \
 		--eval "(require 'package-lint)" \
 		--eval "(setq package-lint-main-file \"helixel.el\")" \
 		-f package-lint-batch-and-exit \

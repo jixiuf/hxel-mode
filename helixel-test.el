@@ -1480,6 +1480,25 @@ Buffer starts with point at position 1."
     (should (string= (buffer-string) "hEllo"))
     (should (= (point) 3))))
 
+(ert-deftest helixel-test-toggle-case-count ()
+  "3~ toggles 3 characters and advances."
+  (helixel-test-with-buffer "HeLlO"
+    (let ((current-prefix-arg 3))
+      (call-interactively #'helixel-toggle-case))
+    (should (string= (buffer-string) "hEllO"))
+    (should (= (point) 4))))
+
+(ert-deftest helixel-test-toggle-case-count-dot-repeat ()
+  "2. after 2~ toggles 2 more chars (each . toggles 1)."
+  (helixel-test-with-buffer "HeLlO wOrLd"
+    (let ((current-prefix-arg 2))
+      (call-interactively #'helixel-toggle-case))
+    (should (string= (buffer-string) "hELlO wOrLd"))
+    (should (= (point) 3))
+    (helixel-repeat-edit 2)
+    (should (string= (buffer-string) "hElLO wOrLd"))
+    (should (= (point) 5))))
+
 (ert-deftest helixel-test-downcase-region ()
   "gu on a region lowercases."
   (helixel-test-with-buffer "HELLO"
@@ -1493,6 +1512,20 @@ Buffer starts with point at position 1."
     (set-mark 6)
     (helixel-upcase)
     (should (string= (buffer-string) "HELLO"))))
+
+(ert-deftest helixel-test-downcase-count ()
+  "3gu lowercases 3 words."
+  (helixel-test-with-buffer "HELLO WORLD FOO bar"
+    (let ((current-prefix-arg 3))
+      (call-interactively #'helixel-downcase))
+    (should (string= (buffer-string) "hello world foo bar"))))
+
+(ert-deftest helixel-test-upcase-count ()
+  "2gU uppercases 2 words."
+  (helixel-test-with-buffer "hello WORLD foo BAR"
+    (let ((current-prefix-arg 2))
+      (call-interactively #'helixel-upcase))
+    (should (string= (buffer-string) "HELLO WORLD foo BAR"))))
 
 (ert-deftest helixel-test-comment-toggle ()
   "gc toggles comment on region or line."
@@ -6126,6 +6159,37 @@ kill naturally moved point — use a single xd prefix for bulk kill."
       (helixel-repeat-edit)
       ;; The second line should also be indented
       (should (not (string= after-first (buffer-string)))))))
+
+(ert-deftest helixel-test-indent-count ()
+  "3>> indents 3 columns."
+  (helixel-test-with-buffer "line1\nline2"
+    (goto-char 1)
+    (set-mark 12)
+    (let ((current-prefix-arg 3))
+      (call-interactively #'helixel-indent-right))
+    (should (string= (buffer-string) "   line1\n   line2"))))
+
+(ert-deftest helixel-test-replace-char-basic ()
+  "rX replaces char at point."
+  (helixel-test-with-buffer "hello"
+    (helixel-replace-char ?X)
+    (should (string= (buffer-string) "Xello"))))
+
+(ert-deftest helixel-test-replace-char-region ()
+  "rX on region replaces all chars with X."
+  (helixel-test-with-buffer "hello world"
+    (set-mark 6)
+    (helixel-replace-char ?-)
+    (should (string= (buffer-string) "----- world"))))
+
+(ert-deftest helixel-test-replace-char-dot-repeat ()
+  "rX then . replaces next char with X."
+  (helixel-test-with-buffer "abc"
+    (helixel-replace-char ?X)
+    (should (string= (buffer-string) "Xbc"))
+    (should (= (point) 2))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "XXc"))))
 
 (ert-deftest helixel-test-repeat-line-advance-count ()
   "`3. ` after x> indents lines 2,3,4 (auto-advancing each time)."

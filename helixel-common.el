@@ -399,13 +399,21 @@ Used to support cycling through the kill ring after a replace.")
 ;; ── Indent ──
 
 (helixel-define-command helixel-indent-left
-    (:repeatable "<" :repeat-advance 'line)
-  (call-interactively #'indent-rigidly-left)
+    (:repeatable "<" :repeat-advance 'line :params (&optional count))
+  (interactive "p")
+  (let ((n (or count 1)))
+    (if (use-region-p)
+        (indent-rigidly (region-beginning) (region-end) (- n))
+      (indent-rigidly (line-beginning-position) (line-end-position) (- n))))
   (helixel--clear-data))
 
 (helixel-define-command helixel-indent-right
-    (:repeatable ">" :repeat-advance 'line)
-  (call-interactively #'indent-rigidly-right)
+    (:repeatable ">" :repeat-advance 'line :params (&optional count))
+  (interactive "p")
+  (let ((n (or count 1)))
+    (if (use-region-p)
+        (indent-rigidly (region-beginning) (region-end) n)
+      (indent-rigidly (line-beginning-position) (line-end-position) n)))
   (helixel--clear-data))
 
 ;; ── Case operations ──
