@@ -24,8 +24,10 @@
 ;;; Commentary:
 ;;
 ;; helixel-mode is a minor mode that provides modal editing inspired by
-;; the Helix editor.  It loads helixel-common (core state machine and
-;; keymaps), helixel-search (isearch-backed search), and helixel-textobj
+;; the Helix editor.  It loads helixel-state (modal state machine),
+;; helixel-move (movement commands), helixel-common (editing commands
+;; and dot-repeat replay), helixel-keymap (keymap definitions),
+;; helixel-search (isearch-backed search), and helixel-textobj
 ;; (text objects).
 
 
@@ -33,6 +35,7 @@
 
 (require 'helixel-action)
 (require 'helixel-common)
+(require 'helixel-keymap)
 (require 'helixel-search)
 (require 'helixel-delimiter)
 (require 'helixel-textobj)

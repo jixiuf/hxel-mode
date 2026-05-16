@@ -17,13 +17,16 @@ and a pluggable operator/selection architecture.
 | `helixel.el` | Entry point, requires all sub-modules |
 | `helixel-edit.el` | **Kernel**: edit tx schema (`helixel-edit` struct), `helixel-sel` struct, op registry. NO helixel deps. |
 | `helixel-action.el` | Action ring, `;` jumping, group-skipping. Requires helixel-edit. |
-| `helixel-repeat.el` | Dot-repeat (`.`): record edits, recreate selections, execute. Requires helixel-action + edit. |
-| `helixel-common.el` | State machine, keymaps, movement/editing commands, shared kill core. |
+| `helixel-repeat.el` | Dot-repeat (`.`): record edits, execute keys, insert recording. Requires helixel-action + edit. |
+| `helixel-state.el` | **Modal state machine**: state switching, minor modes, mode activation, `helixel-define-command` macro, insert entry/exit, keymap management. |
+| `helixel-move.el` | Movement commands, selection (line/rect), word/WORD/symbol moves, rect change/replay, kill/yank helpers. |
+| `helixel-common.el` | Editing commands (kill, change, copy, replace, yank, indent) + selection recreate + `helixel-edit-defop` dot-repeat runners. |
+| `helixel-keymap.el` | All keymap definitions (`helixel-normal-map`, etc.), colon commands, populates `helixel-state-map-alist`. |
 | `helixel-search.el` | Search/find-char engine + `n`/`N` repeat context. |
 | `helixel-textobj.el` | Text objects (word, WORD, pair, quote, tag, etc.) |
 | `helixel-delimiter.el` | Unified delimiter protocol for surround/textobj. |
 | `helixel-surround.el` | Surround operations: add, delete, replace. |
-| `helixel-test.el` | ERT test suite (~366 tests). |
+| `helixel-test.el` | ERT test suite (~439 tests). |
 
 ## Dependency Graph (one-way, no cycles)
 
@@ -34,7 +37,13 @@ helixel-action.el        ring + ;
    ↓
 helixel-repeat.el        . dispatch
    ↓
-helixel-common.el        state + editing commands
+helixel-state.el         modal state machine
+   ↓
+helixel-move.el          movement + selection
+   ↓
+helixel-common.el        editing + replay
+   ↓
+helixel-keymap.el        keymap definitions
    ↓
 helixel-search.el        search/find-char
 ```
@@ -315,7 +324,17 @@ sel ctx manually.  In real usage, kmacro keys encode cursor movement.
 
 ---
 
-*Last updated: Command-based replay via pre-command-hook recording.*
+### 33. Emacs 31 `define-minor-mode` captures keymap value at expansion time
+**Problem**: In Emacs 31+, `define-minor-mode` with `:keymap VAR` calls
+`add-minor-mode` at the **top level** (macro-expansion time), capturing
+`VAR`'s value permanently.  If `VAR` is later replaced via `setq`,
+`minor-mode-map-alist` keeps the old value and keys fall through.
+**Fix**: Create keymap shells in the same file as the minor modes, before
+`define-minor-mode` runs (e.g. `(defvar helixel-normal-map (define-keymap :full t))`).
+Then populate them in-place with `define-key` (not `setq`) so the object
+reference stored by `add-minor-mode` stays valid.
+
+*Last updated: Keymap shells created before minor modes, populated via define-key.*
 
 ### 31. Command-based replay replaces key-based for insert-mode keys
 **Design**: During insert-mode recording, `pre-command-hook` captures
