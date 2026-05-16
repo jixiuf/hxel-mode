@@ -133,64 +133,88 @@ automatically, so this macro only does `push-mark' + activate."
        (push-mark current t 'activate))))
 
 (helixel-define-command helixel-forward-word-start
-    (:category movement :subcat word :dir forward)
+    (:category movement :subcat word :dir forward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-beginning 'helixel-word)))
+   (helixel--forward-beginning 'helixel-word (or count 1))))
 
 (helixel-define-command helixel-forward-word-end
-    (:category movement :subcat word :dir forward)
+    (:category movement :subcat word :dir forward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-end 'helixel-word)))
+   (helixel--forward-end 'helixel-word (or count 1))))
 
 (helixel-define-command helixel-backward-word-start
-    (:category movement :subcat word :dir backward)
+    (:category movement :subcat word :dir backward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-beginning 'helixel-word -1)))
+   (helixel--forward-beginning 'helixel-word (- (or count 1)))))
 
 (helixel-define-command helixel-backward-word-end
-    (:category movement :subcat word :dir backward)
+    (:category movement :subcat word :dir backward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-end 'helixel-word -1)))
+   (helixel--forward-end 'helixel-word (- (or count 1)))))
 
 (helixel-define-command helixel-forward-WORD-start
-    (:category movement :subcat WORD :dir forward)
+    (:category movement :subcat WORD :dir forward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-beginning 'helixel-WORD)))
+   (helixel--forward-beginning 'helixel-WORD (or count 1))))
 
 (helixel-define-command helixel-forward-WORD-end
-    (:category movement :subcat WORD :dir forward)
+    (:category movement :subcat WORD :dir forward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-end 'helixel-WORD)))
+   (helixel--forward-end 'helixel-WORD (or count 1))))
 
 (helixel-define-command helixel-backward-WORD
-    (:category movement :subcat WORD :dir backward)
+    (:category movement :subcat WORD :dir backward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-beginning 'helixel-WORD -1)))
+   (helixel--forward-beginning 'helixel-WORD (- (or count 1)))))
 
 (helixel-define-command helixel-backward-WORD-end
-    (:category movement :subcat WORD :dir backward)
+    (:category movement :subcat WORD :dir backward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-end 'helixel-WORD -1)))
+   (helixel--forward-end 'helixel-WORD (- (or count 1)))))
 
 (helixel-define-command helixel-forward-symbol-start
-    (:category movement :subcat symbol :dir forward)
+    (:category movement :subcat symbol :dir forward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-beginning 'helixel-symbol)))
+   (helixel--forward-beginning 'helixel-symbol (or count 1))))
 
 (helixel-define-command helixel-forward-symbol-end
-    (:category movement :subcat symbol :dir forward)
+    (:category movement :subcat symbol :dir forward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-end 'helixel-symbol)))
+   (helixel--forward-end 'helixel-symbol (or count 1))))
 
 (helixel-define-command helixel-backward-symbol-start
-    (:category movement :subcat symbol :dir backward)
+    (:category movement :subcat symbol :dir backward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-beginning 'helixel-symbol -1)))
+   (helixel--forward-beginning 'helixel-symbol (- (or count 1)))))
 
 (helixel-define-command helixel-backward-symbol-end
-    (:category movement :subcat symbol :dir backward)
+    (:category movement :subcat symbol :dir backward
+     :params (&optional count))
+  (interactive "p")
   (helixel--with-movement-surround
-   (helixel--forward-end 'helixel-symbol -1)))
+   (helixel--forward-end 'helixel-symbol (- (or count 1)))))
 
 (helixel-define-command helixel-go-beginning-buffer
     (:category movement :subcat goto)
