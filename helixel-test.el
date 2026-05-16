@@ -1510,6 +1510,56 @@ Buffer starts with point at position 1."
       (helixel-fill))
     (should (string-match-p "\n" (buffer-string)))))
 
+;;; helixel-join-lines (J) tests
+
+(ert-deftest helixel-test-join-lines-basic ()
+  "J joins the current line with the next."
+  (helixel-test-with-buffer "hello\nworld"
+    (helixel-join-lines)
+    (should (string= (buffer-string) "hello world"))))
+
+(ert-deftest helixel-test-join-lines-with-count ()
+  "3J joins 3 lines together."
+  (helixel-test-with-buffer "one\ntwo\nthree"
+    (helixel-join-lines 3)
+    (should (string= (buffer-string) "one two three"))))
+
+(ert-deftest helixel-test-join-lines-dot-repeat ()
+  "J then . repeats the join on the next line."
+  (helixel-test-with-buffer "a\nb\nc"
+    (helixel-join-lines)
+    (should (string= (buffer-string) "a b\nc"))
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "a b c"))))
+
+(ert-deftest helixel-test-join-lines-dot-repeat-with-count ()
+  "3J stores count so . repeats joining 3 lines."
+  (helixel-test-with-buffer "a\nb\nc\nd\ne\nf"
+    (helixel-join-lines 3)
+    (should (string= (buffer-string) "a b c\nd\ne\nf"))
+    (forward-line)
+    (helixel-repeat-edit)
+    (should (string= (buffer-string) "a b c\nd e f"))))
+
+(ert-deftest helixel-test-join-lines-at-eob ()
+  "J with one line in buffer removes trailing newline."
+  (helixel-test-with-buffer "hello\n"
+    (helixel-join-lines)
+    (should (string= (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-join-lines-whitespace-cleanup ()
+  "J strips leading whitespace from the joined line."
+  (helixel-test-with-buffer "hello\n  world"
+    (helixel-join-lines)
+    (should (string= (buffer-string) "hello world"))))
+
+(ert-deftest helixel-test-join-lines-blank-line ()
+  "J joins a blank line with the next."
+  (helixel-test-with-buffer "hello\n\nworld"
+    (goto-char 7)
+    (helixel-join-lines)
+    (should (string= (buffer-string) "hello\nworld"))))
+
 ;;; helixel-yank (p) rect tests
 
 (ert-deftest helixel-test-yank-rect ()
