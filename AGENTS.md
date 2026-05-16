@@ -18,9 +18,9 @@ and a pluggable operator/selection architecture.
 | `helixel-edit.el` | **Kernel**: edit tx schema (`helixel-edit` struct), `helixel-sel` struct, op registry. NO helixel deps. |
 | `helixel-action.el` | Action ring, `;` jumping, group-skipping. Requires helixel-edit. |
 | `helixel-repeat.el` | Dot-repeat (`.`): record edits, execute keys, insert recording. Requires helixel-action + edit. |
-| `helixel-state.el` | **Modal state machine**: state switching, minor modes, mode activation, `helixel-define-command` macro, insert entry/exit, keymap management. |
+| `helixel-state.el` | **Modal state machine**: state switching, minor modes, mode activation, `helixel-define-command` and `helixel-define-operator` macros, insert entry/exit, keymap management. |
 | `helixel-move.el` | Movement commands, selection (line/rect), word/WORD/symbol moves, rect change/replay, kill/yank helpers. |
-| `helixel-common.el` | Editing commands (kill, change, copy, replace, yank, indent) + selection recreate + `helixel-edit-defop` dot-repeat runners. |
+| `helixel-common.el` | Editing commands (kill, change, copy, replace, yank, indent) + selection recreate + `helixel-register-op` dot-repeat runners. |
 | `helixel-keymap.el` | All keymap definitions (`helixel-normal-map`, etc.), colon commands, populates `helixel-state-map-alist`. |
 | `helixel-search.el` | Search/find-char engine + `n`/`N` repeat context. |
 | `helixel-textobj.el` | Text objects (word, WORD, pair, quote, tag, etc.) |
@@ -291,7 +291,7 @@ echo area, which is visible to the user during insert mode.
 
 ### 27. `:repeat-advance` tag system for operator auto-advance
 **Design**: Each operator declares its `.` auto-advance behavior via
-`:repeat-advance` in `helixel-edit-defop`.  Values: `nil` (no advance),
+`:repeat-advance` in `helixel-register-op` or `helixel-define-operator`.  Values: `nil` (no advance),
 `'line` (forward-line when sel is line kind), function (custom).
 Read by `helixel-edit-op-advance` and executed by
 `helixel--repeat-do-advance` in Branch H of `helixel-repeat-edit`.

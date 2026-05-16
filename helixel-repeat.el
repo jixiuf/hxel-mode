@@ -300,7 +300,7 @@ is nil, no advance happens."
 ;; Execution dispatcher — single entry point for replay
 ;;
 ;; All op runners live in their owning modules and self-register via
-;; `helixel-edit-defop'.  This module knows nothing about specific ops.
+;; `helixel-register-op'.  This module knows nothing about specific ops.
 
 (defun helixel--execute-edit (tx)
   "Execute transaction TX on the current buffer.

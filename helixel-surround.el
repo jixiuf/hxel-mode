@@ -140,9 +140,9 @@ Returns (OPEN . CLOSE) where each is a char or string, or nil."
 
 (defun helixel--surround-lookup-delimiter (char)
   "Look up CHAR and return a helixel-delimiter plist, or nil."
-  (if-let ((block (helixel--surround-block-lookup char)))
+  (if-let* ((block (helixel--surround-block-lookup char)))
       (helixel--make-block-delimiter (car block) (cdr block))
-    (when-let ((pair (assoc char helixel--surround-pairs)))
+    (when-let* ((pair (assoc char helixel--surround-pairs)))
       (helixel--make-pair-delimiter (car pair) (cdr pair)))))
 
 ;; ============================================================================
@@ -386,9 +386,9 @@ Prompts per type: tag `read-string', all others `read-char'."
 ;; ============================================================================
 
 ;; ---------------------------------------------------------------------------
-;; Edit-op runners (registry consumers — see `helixel-edit-defop')
+;; Edit-op runners (registry consumers — see `helixel-register-op')
 
-(helixel-edit-defop surround-add
+(helixel-register-op surround-add
   :display (lambda (tx)
              (let ((c (plist-get (helixel-edit-payload tx) :char)))
                (if c (format "ms[%c]" c) "ms")))
@@ -397,7 +397,7 @@ Prompts per type: tag `read-string', all others `read-char'."
                         (pair (helixel--surround-lookup char)))
               (helixel--surround-add (car pair) (cdr pair)))))
 
-(helixel-edit-defop surround-add-tag
+(helixel-register-op surround-add-tag
   :display (lambda (tx)
              (let ((tag (plist-get (helixel-edit-payload tx) :tag)))
                (if tag (format "mt[%s]" tag) "mt")))
@@ -405,13 +405,13 @@ Prompts per type: tag `read-string', all others `read-char'."
             (helixel--surround-add-tag
              (plist-get (helixel-edit-payload tx) :tag))))
 
-(helixel-edit-defop surround-delete :display "md"
+(helixel-register-op surround-delete :display "md"
   :runner (lambda (tx)
             (when-let* ((d (helixel-sel-surround-delimiter
                            (helixel-edit-sel tx))))
               (goto-char (helixel--surround-delete-delimiter d)))))
 
-(helixel-edit-defop surround-replace
+(helixel-register-op surround-replace
   :display (lambda (tx)
              (let* ((p (helixel-edit-payload tx))
                     (label (or (plist-get p :tag)

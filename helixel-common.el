@@ -24,7 +24,7 @@
 ;; Editing commands and dot-repeat replay for helixel-mode.
 ;;
 ;; Editing commands (kill, change, copy, replace, yank, indent) plus
-;; the `helixel-edit-defop' dot-repeat runners that replay them.
+;; the `helixel-register-op' dot-repeat runners that replay them.
 ;; Also houses selection recreation functions consumed by `.` and the
 ;; `helixel--selection-type' validator.
 ;;
@@ -188,30 +188,25 @@ rectangle line via `helixel--rect-replay' — no state-switching side
 
 ;; ── Edit-op registry ──
 ;; Each operator registers a `:runner' (called by `.`) and a `:display'
-;; label via `helixel-edit-defop'.  Runners call the editing commands
-;; defined below.
+;; label via `helixel-register-op' or `helixel-define-operator'.
+;; Runners call the editing commands defined below.
 
-(helixel-edit-defop kill          :display "d" :repeat-advance nil
-                    :runner (lambda (_tx) (helixel-kill-thing-at-point)))
-(helixel-edit-defop change        :display "c" :repeat-advance nil
-                    :runner #'helixel--repeat-change-core)
-(helixel-edit-defop copy          :display "y" :repeat-advance 'line
-                    :runner (lambda (_tx) (helixel-kill-ring-save)))
-(helixel-edit-defop replace       :display "r" :repeat-advance 'line
-                    :runner (lambda (_tx) (helixel-replace)))
-(helixel-edit-defop replace-char  :repeat-advance 'line
+;; Ops whose `.` runner IS the command → use `helixel-define-operator'
+;; below (kill, copy, replace, paste-after, paste-before).
+
+;; Ops with non-trivial runners (need tx payload) → register separately:
+(helixel-register-op change :display "c" :repeat-advance nil
+  :runner #'helixel--repeat-change-core)
+
+(helixel-register-op replace-char :repeat-advance 'line
   :display (lambda (tx)
              (let ((c (plist-get (helixel-edit-payload tx) :char)))
                (if c (format "R[%c]" c) "R")))
   :runner (lambda (tx)
             (helixel-replace-char
              (plist-get (helixel-edit-payload tx) :char))))
-(helixel-edit-defop paste-after   :display "p" :repeat-advance 'line
-                    :runner (lambda (_tx) (helixel-yank)))
-(helixel-edit-defop paste-before  :display "P" :repeat-advance 'line
-                    :runner (lambda (_tx) (helixel-yank-before)))
 
-(helixel-edit-defop insert-text   :display "i" :repeat-advance 'line
+(helixel-register-op insert-text :display "i" :repeat-advance 'line
   :runner (lambda (tx)
             (let ((keys (plist-get (helixel-edit-payload tx) :keys))
                   (cmds (plist-get (helixel-edit-payload tx) :commands)))
@@ -243,13 +238,15 @@ Supports `line' and `rect'."
 
 ;; ── Kill & Change ──
 
-(helixel-define-command helixel-kill-thing-at-point
-    (:category edit :subcat kill :edit-op kill)
+(helixel-define-operator helixel-kill-thing-at-point
+    (:op kill :display "d" :repeat-advance nil)
+  (helixel--record-edit 'kill)
   (helixel--delete-selection)
   (helixel--clear-data))
 
 (helixel-define-command helixel-change-thing-at-point
-    (:category edit :subcat change :edit-op change)
+    (:category edit :subcat change)
+  (helixel--record-edit 'change)
   (if (and (use-region-p) (eq (helixel--selection-type) 'rect))
       (helixel--rect-change)
     (helixel--delete-selection)
@@ -263,8 +260,9 @@ Supports `line' and `rect'."
 Value is nil after a rectangle replace.
 Used to support cycling through the kill ring after a replace.")
 
-(helixel-define-command helixel-replace
-    (:category edit :subcat replace :edit-op replace)
+(helixel-define-operator helixel-replace
+    (:op replace :display "r" :repeat-advance 'line)
+  (helixel--record-edit 'replace)
   (if (= 0 (length kill-ring))
       (message "nothing to yank")
     (let* ((text (current-kill 0 t))
@@ -345,8 +343,9 @@ Used to support cycling through the kill ring after a replace.")
 
 ;; ── Copy ──
 
-(helixel-define-command helixel-kill-ring-save
-    (:category edit :subcat copy :edit-op copy)
+(helixel-define-operator helixel-kill-ring-save
+    (:op copy :display "y" :repeat-advance 'line)
+  (helixel--record-edit 'copy)
   (when (use-region-p)
     (cond
      ((eq (helixel--selection-type) 'rect)
@@ -362,10 +361,11 @@ Used to support cycling through the kill ring after a replace.")
 
 ;; ── Yank ──
 
-(helixel-define-command helixel-yank
-    (:category edit :subcat paste-after :edit-op paste-after
-               :params (&optional arg))
+(helixel-define-operator helixel-yank
+    (:op paste-after :display "p" :repeat-advance 'line
+     :params (&optional arg))
   (interactive "*P")
+  (helixel--record-edit 'paste-after)
   (cond
    ((helixel--rect-wise-kill-p)
     (let ((lines (nth 1 (get-text-property
@@ -379,10 +379,11 @@ Used to support cycling through the kill ring after a replace.")
    (t
     (yank arg))))
 
-(helixel-define-command helixel-yank-before
-    (:category edit :subcat paste-before :edit-op paste-before
-               :params (&optional arg))
+(helixel-define-operator helixel-yank-before
+    (:op paste-before :display "P" :repeat-advance 'line
+     :params (&optional arg))
   (interactive "*P")
+  (helixel--record-edit 'paste-before)
   (cond
    ((helixel--rect-wise-kill-p)
     (let ((lines (nth 1 (get-text-property
@@ -398,19 +399,23 @@ Used to support cycling through the kill ring after a replace.")
 
 ;; ── Indent ──
 
-(helixel-define-command helixel-indent-left
-    (:repeatable "<" :repeat-advance 'line :params (&optional count))
+(helixel-define-operator helixel-indent-left
+    (:op indent-left :display "<" :repeat-advance 'line
+     :params (&optional count))
   (interactive "p")
   (let ((n (or count 1)))
+    (helixel--record-edit 'indent-left)
     (if (use-region-p)
         (indent-rigidly (region-beginning) (region-end) (- n))
       (indent-rigidly (line-beginning-position) (line-end-position) (- n))))
   (helixel--clear-data))
 
-(helixel-define-command helixel-indent-right
-    (:repeatable ">" :repeat-advance 'line :params (&optional count))
+(helixel-define-operator helixel-indent-right
+    (:op indent-right :display ">" :repeat-advance 'line
+     :params (&optional count))
   (interactive "p")
   (let ((n (or count 1)))
+    (helixel--record-edit 'indent-right)
     (if (use-region-p)
         (indent-rigidly (region-beginning) (region-end) n)
       (indent-rigidly (line-beginning-position) (line-end-position) n)))
@@ -418,10 +423,11 @@ Used to support cycling through the kill ring after a replace.")
 
 ;; ── Case operations ──
 
-(helixel-define-command helixel-toggle-case
-    (:repeatable "~" :subcat case :params (&optional count)
-     :record-payload (:count (or count 1)))
+(helixel-define-operator helixel-toggle-case
+    (:op toggle-case :display "~" :subcat case
+     :params (&optional count))
   (interactive "p")
+  (helixel--record-edit 'toggle-case :count (or count 1))
   (if (use-region-p)
       (let ((text (buffer-substring (region-beginning) (region-end))))
         (delete-region (region-beginning) (region-end))
@@ -435,21 +441,21 @@ Used to support cycling through the kill ring after a replace.")
         (insert (if (eq c (upcase c)) (downcase c) (upcase c))))))
   (helixel--clear-data))
 
-(helixel-define-command helixel-downcase
-    (:repeatable "gu" :repeat-advance 'line :subcat case
-     :params (&optional count)
-     :record-payload (:count (or count 1)))
+(helixel-define-operator helixel-downcase
+    (:op downcase :display "gu" :repeat-advance 'line
+     :subcat case :params (&optional count))
   (interactive "p")
+  (helixel--record-edit 'downcase :count (or count 1))
   (if (use-region-p)
       (downcase-region (region-beginning) (region-end))
     (downcase-word (or count 1)))
   (helixel--clear-data))
 
-(helixel-define-command helixel-upcase
-    (:repeatable "gU" :repeat-advance 'line :subcat case
-     :params (&optional count)
-     :record-payload (:count (or count 1)))
+(helixel-define-operator helixel-upcase
+    (:op upcase :display "gU" :repeat-advance 'line
+     :subcat case :params (&optional count))
   (interactive "p")
+  (helixel--record-edit 'upcase :count (or count 1))
   (if (use-region-p)
       (upcase-region (region-beginning) (region-end))
     (upcase-word (or count 1)))
@@ -457,8 +463,9 @@ Used to support cycling through the kill ring after a replace.")
 
 ;; ── Comment toggle ──
 
-(helixel-define-command helixel-comment-toggle
-    (:repeatable "gc" :subcat comment)
+(helixel-define-operator helixel-comment-toggle
+    (:op comment-toggle :display "gc" :subcat comment)
+  (helixel--record-edit 'comment-toggle)
   (if (use-region-p)
       (comment-or-uncomment-region (region-beginning) (region-end))
     (comment-dwim nil))
@@ -466,8 +473,10 @@ Used to support cycling through the kill ring after a replace.")
 
 ;; ── Shell command filter ──
 
-(helixel-define-command helixel-shell-command
-    (:repeatable "!" :repeat-advance 'line :subcat shell)
+(helixel-define-operator helixel-shell-command
+    (:op shell-command :display "!" :repeat-advance 'line
+     :subcat shell)
+  (helixel--record-edit 'shell-command)
   (let ((cmd (read-shell-command "!")))
     (if (use-region-p)
         (shell-command-on-region
@@ -482,8 +491,9 @@ Used to support cycling through the kill ring after a replace.")
 
 ;; ── Text formatting ──
 
-(helixel-define-command helixel-fill
-    (:repeatable "gq" :subcat fill)
+(helixel-define-operator helixel-fill
+    (:op fill :display "gq" :subcat fill)
+  (helixel--record-edit 'fill)
   (if (use-region-p)
       (fill-region (region-beginning) (region-end))
     (fill-paragraph nil))
@@ -491,17 +501,17 @@ Used to support cycling through the kill ring after a replace.")
 
 ;; ── Join lines ──
 
-(helixel-edit-defop join-lines :display "J" :repeat-advance nil
+(helixel-register-op join-lines :display "J" :repeat-advance nil
   :runner (lambda (tx)
             (let ((n (or (plist-get (helixel-edit-payload tx) :count) 2)))
               (dotimes (_ (1- n))
                 (join-line 1)))))
 
 (helixel-define-command helixel-join-lines
-    (:edit-op join-lines :params (&optional count)
-     :record-payload (:count (max (or count 1) 2)))
+    (:category edit :subcat join-lines :params (&optional count))
   (interactive "p")
   (let ((n (max (or count 1) 2)))
+    (helixel--record-edit 'join-lines :count n)
     (dotimes (_ (1- n))
       (join-line 1))
     (helixel--clear-data)))

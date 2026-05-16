@@ -429,9 +429,9 @@ Replay typed text on all rectangle lines."
   (helixel--clear-data))
 
 (helixel-define-command helixel-replace-char
-    (:edit-op replace-char :params (char)
-     :record-payload (:char char))
+    (:category edit :subcat replace-char :params (char))
   (interactive "c")
+  (helixel--record-edit 'replace-char :char char)
   (if (use-region-p)
       (helixel--replace-region
        (region-beginning) (region-end)

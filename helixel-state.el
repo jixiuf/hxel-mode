@@ -133,48 +133,32 @@ Stores mode-specific helixel bindings registered via `helixel-define-key'.")
 ;; ── Command definition macro ──
 ;;
 ;; All helixel commands use `helixel-define-command' to declare their
-;; action metadata.  Tracking code (action-start, direction, edit
-;; recording, highlight clearing, visual-mode tracking) is expanded
-;; inline at compile time — zero hooks, zero advice.
+;; action metadata.  Tracking code (action-start, direction, highlight
+;; clearing, visual-mode tracking) is expanded inline at compile time.
+;;
+;; Editing commands should additionally call `helixel--record-edit'
+;; in their body (or use `helixel-define-operator' which handles both).
 
 (defmacro helixel-define-command (name metadata &rest body)
   "Define a helixel command NAME with METADATA auto-tracking.
 
 METADATA is a plist:
-  :category      CAT  — action category (movement, edit, search, state, etc.)
-  :subcat        SUB  — action subcategory (word, kill, insert, etc.)
-  :dir           DIR  — direction for n/N repeat context (forward, backward)
-  :edit-op       OP   — calls (helixel--record-edit OP)
-  :repeatable    DISPLAY — auto-derive :edit-op from NAME, register op
-                    with DISPLAY string and a runner that re-calls NAME.
-                    Sets :category edit and :subcat to op name if unset.
-  :repeat-advance TAG — passed to `helixel-edit-defop' (nil, `line', fn).
-                    Only meaningful with :repeatable or :edit-op.
-  :record-payload FORM — plist form evaluated at runtime; result spliced
-                    as extra args to `helixel--record-edit'.
-  :clear-highlights    — default t for :category movement, nil otherwise
-  :params        PARAM-LIST  — optional function parameter list
-                                (e.g., (&optional count))
+  :category CAT — action category (movement, edit, search, state, etc.)
+  :subcat   SUB — action subcategory (word, kill, insert, etc.)
+  :dir      DIR — direction for n/N repeat context (forward, backward)
+  :clear-highlights — default t for :category movement, nil otherwise
+  :params   PARAM-LIST — optional function parameter list
 
-All tracking code is expanded inline at compile time — zero hooks,
-zero advice.
-BODY is the command's business logic.
-If the body begins with (interactive ...), that form is extracted and placed
-before the tracking code; otherwise (interactive) is inserted automatically."
+For :category movement:
+  - Auto-injects `helixel--track-visual-move' for `.` replay in visual mode
+  - Auto-injects `helixel--clear-highlights' (unless :clear-highlights nil)
+
+All tracking code is expanded inline at compile time — zero hooks.
+BODY is the command's business logic."
   (declare (indent 2))
-  (let* ((repeatable (plist-get metadata :repeatable))
-         (derived-op (when repeatable
-                       (intern (substring (symbol-name name)
-                                         (length "helixel-")))))
-         (cat (or (plist-get metadata :category)
-                  (when repeatable 'edit)))
-         (sub (or (plist-get metadata :subcat)
-                  derived-op))
+  (let* ((cat (plist-get metadata :category))
+         (sub (plist-get metadata :subcat))
          (dir (plist-get metadata :dir))
-         (op  (or (plist-get metadata :edit-op)
-                  derived-op))
-         (advance (plist-get metadata :repeat-advance))
-         (payload-form (plist-get metadata :record-payload))
          (clear (if (plist-member metadata :clear-highlights)
                     (plist-get metadata :clear-highlights)
                   (eq cat 'movement)))
@@ -186,37 +170,68 @@ before the tracking code; otherwise (interactive) is inserted automatically."
          (track-visual
           (when (eq cat 'movement)
             `((when (eq helixel--current-state 'visual)
-                (helixel--track-visual-move ',name)))))
-         ;; Build the record-edit call with optional extra payload.
-         (record-call
-          (when op
-            `((helixel--record-edit ',op ,@payload-form))))
-         ;; Build the edit-op registration form.
-         (defop-form
-          (when repeatable
-            `((helixel-edit-defop ,derived-op
-                :display ,repeatable
-                :runner (lambda (_tx) (,name))
-                ,@(when advance `(:repeat-advance ,advance)))))))
+                (helixel--track-visual-move ',name))))))
+    `(defun ,name ,(or params ())
+       ,(format "Helixel %s.%s command." cat sub)
+       ,interactive-form
+       ;; ── Action tracking (for ; and C-o/C-i) ──
+       (helixel-action-start ',cat ',sub)
+       ;; ── Direction (for n/N repeat) ──
+       ,@(when dir `((helixel--live-cat-set-dir ',dir)))
+       ;; ── Highlight clearing ──
+       ,@(when clear '((helixel--clear-highlights)))
+       ;; ── Body (pure business logic) ──
+       ,@rest-body
+       ;; ── Visual-mode tracking (for . replay of movements) ──
+       ;; Only movement commands accumulate moves; edit commands
+       ;; record the accumulated moves via `helixel--record-edit'.
+       ,@track-visual)))
+
+;; ── Operator definition macro ──
+;;
+;; Combines command definition + op registration for `.` repeat.
+;; Replaces the old :repeatable / :edit-op patterns with a single,
+;; explicit form.
+
+(defmacro helixel-define-operator (name metadata &rest body)
+  "Define a helixel editing operator NAME.
+
+Combines command definition (action tracking for \=`;\=` jumping
+and jump-list navigation) with
+op registration (for `.` repeat) into a single form.
+
+METADATA is a plist:
+  :op OP              — operator symbol for `.` (required)
+  :display DISPLAY    — label string or function (TX) -> string
+  :repeat-advance TAG — nil, `line', or function
+  :subcat SUB         — action subcategory (default: OP)
+  :params PARAMS      — function parameter list
+
+Expands to:
+  1. (helixel-register-op OP :display ... :runner (lambda () (NAME)))
+  2. (helixel-define-command NAME (:category edit ...) BODY)
+
+The command body SHOULD call (helixel--record-edit OP ...) to record
+the edit for `.` replay."
+  (declare (indent 2))
+  (let* ((op (plist-get metadata :op))
+         (display (plist-get metadata :display))
+         (advance (plist-get metadata :repeat-advance))
+         (subcat (or (plist-get metadata :subcat) op)))
+    (unless op
+      (error "helixel-define-operator: :op is required"))
     `(progn
-       ,@defop-form
-       (defun ,name ,(or params ())
-         ,(format "Helixel %s.%s command." cat sub)
-         ,interactive-form
-         ;; ── Action tracking (for ; and C-o/C-i) ──
-         (helixel-action-start ',cat ',sub)
-         ;; ── Direction (for n/N repeat) ──
-         ,@(when dir `((helixel--live-cat-set-dir ',dir)))
-         ;; ── Edit recording (for . repeat) ──
-         ,@record-call
-         ;; ── Highlight clearing ──
-         ,@(when clear '((helixel--clear-highlights)))
-         ;; ── Body (pure business logic) ──
-         ,@rest-body
-         ;; ── Visual-mode tracking (for . replay of movements) ──
-         ;; Only movement commands accumulate moves; edit commands
-         ;; record the accumulated moves via `helixel--record-edit'.
-         ,@track-visual))))
+       ;; ── Op registration (for . replay) ──
+       (helixel-register-op ,op
+         :display ,display
+         :repeat-advance ,advance
+         :runner (lambda (_tx) (,name)))
+       ;; ── Command definition (for action tracking) ──
+       (helixel-define-command ,name
+           (:category edit :subcat ,subcat
+            ,@(when-let* ((p (plist-get metadata :params)))
+                (list :params p)))
+         ,@body))))
 
 ;; Wire textobj hooks for action recording and visual state detection.
 (setq helixel-textobj-action-function #'helixel-action-start)
@@ -416,7 +431,8 @@ Also preserve highlights when `rectangle-mark-mode' is active."
   (helixel--enter-insert))
 
 (helixel-define-command helixel-insert-newline
-    (:category state :subcat insert :edit-op insert-text)
+    (:category state :subcat insert)
+  (helixel--record-edit 'insert-text)
   (helixel--clear-data)
   (end-of-line)
   (newline-and-indent)
@@ -424,7 +440,8 @@ Also preserve highlights when `rectangle-mark-mode' is active."
   (helixel--enter-insert))
 
 (helixel-define-command helixel-insert-prevline
-    (:category state :subcat insert :edit-op insert-text)
+    (:category state :subcat insert)
+  (helixel--record-edit 'insert-text)
   (helixel--clear-data)
   (beginning-of-line)
   (let ((electric-indent-mode nil))

@@ -344,13 +344,17 @@ Does not mutate TX."
 ;;
 ;; Each :op symbol stores its runner and display label as symbol
 ;; properties (`helixel-op-runner', `helixel-op-display').
-;; Modules define ops at load-time via `helixel-edit-defop'.
+;; Modules define ops at load-time via `helixel-register-op'.
 
-(defmacro helixel-edit-defop (op &rest props)
-  "Define edit operator OP with keyword PROPS.
-PROPS is a plist with keys :runner (function (TX)),
-:display (string or function (TX) -> string),
-and :repeat-advance (nil, `line', `auto', or function)."
+(defmacro helixel-register-op (op &rest props)
+  "Register edit operator OP with keyword PROPS.
+
+PROPS is a plist with keys:
+  :runner        — function (TX) -> nil for `.` replay
+  :display       — string or function (TX) -> string for history
+  :repeat-advance — nil, `line', or function for `.` auto-advance
+
+Stores runner, display, and advance as symbol properties on OP."
   (declare (indent 1))
   (let ((runner (plist-get props :runner))
         (display (plist-get props :display))
@@ -359,6 +363,8 @@ and :repeat-advance (nil, `line', `auto', or function)."
        ,@(when runner `((put ',op 'helixel-op-runner ,runner)))
        ,@(when display `((put ',op 'helixel-op-display ,display)))
        ,@(when advance `((put ',op 'helixel-repeat-advance ,advance))))))
+
+
 
 (defun helixel-edit-op-runner (op)
   "Return the runner function for OP (via `helixel-op-runner' property)."
