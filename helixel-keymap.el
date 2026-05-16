@@ -58,6 +58,10 @@
 (define-key helixel-goto-map "d" #'xref-find-definitions)
 (define-key helixel-goto-map "y" #'eglot-find-typeDefinition)
 (define-key helixel-goto-map "i" #'eglot-find-implementation)
+(define-key helixel-goto-map "u" #'helixel-downcase)
+(define-key helixel-goto-map "U" #'helixel-upcase)
+(define-key helixel-goto-map "c" #'helixel-comment-toggle)
+(define-key helixel-goto-map "q" #'helixel-fill)
 
 (define-key helixel-view-map "z" #'recenter-top-bottom)
 
@@ -112,6 +116,8 @@
 (define-key helixel-normal-map "O" #'helixel-insert-prevline)
 (define-key helixel-normal-map "<" #'helixel-indent-left)
 (define-key helixel-normal-map ">" #'helixel-indent-right)
+(define-key helixel-normal-map "~" #'helixel-toggle-case)
+(define-key helixel-normal-map "!" #'helixel-shell-command)
 (define-key helixel-normal-map "i" #'helixel-insert)
 (define-key helixel-normal-map "I" #'helixel-insert-beginning-line)
 (define-key helixel-normal-map "a" #'helixel-insert-after)

@@ -223,6 +223,18 @@ rectangle line via `helixel--rect-replay' — no state-switching side
                          (helixel--execute-keys keys cmds))
                 (insert (or (plist-get (helixel-edit-payload tx) :text)
                             ""))))))
+(helixel-edit-defop toggle-case   :display "~" :repeat-advance nil
+  :runner (lambda (_tx) (helixel-toggle-case)))
+(helixel-edit-defop downcase      :display "gu" :repeat-advance 'line
+  :runner (lambda (_tx) (helixel-downcase)))
+(helixel-edit-defop upcase        :display "gU" :repeat-advance 'line
+  :runner (lambda (_tx) (helixel-upcase)))
+(helixel-edit-defop comment-toggle :display "gc" :repeat-advance nil
+  :runner (lambda (_tx) (helixel-comment-toggle)))
+(helixel-edit-defop shell-command :display "!" :repeat-advance 'line
+  :runner (lambda (_tx) (helixel-shell-command)))
+(helixel-edit-defop fill          :display "gq" :repeat-advance nil
+  :runner (lambda (_tx) (helixel-fill)))
 
 ;; ── Selection type validator ──
 
@@ -408,6 +420,70 @@ Used to support cycling through the kill ring after a replace.")
 (helixel-define-command helixel-indent-right
     (:category edit :subcat indent-right :edit-op indent-right)
   (call-interactively #'indent-rigidly-right)
+  (helixel--clear-data))
+
+;; ── Case operations ──
+
+(helixel-define-command helixel-toggle-case
+    (:category edit :subcat case :edit-op toggle-case)
+  (if (use-region-p)
+      (let ((text (buffer-substring (region-beginning) (region-end))))
+        (delete-region (region-beginning) (region-end))
+        (insert (mapconcat (lambda (c)
+                             (char-to-string
+                              (if (eq c (upcase c)) (downcase c) (upcase c))))
+                           text "")))
+    (let ((c (following-char)))
+      (delete-char 1)
+      (insert (if (eq c (upcase c)) (downcase c) (upcase c)))))
+  (helixel--clear-data))
+
+(helixel-define-command helixel-downcase
+    (:category edit :subcat case :edit-op downcase)
+  (if (use-region-p)
+      (downcase-region (region-beginning) (region-end))
+    (downcase-word 1))
+  (helixel--clear-data))
+
+(helixel-define-command helixel-upcase
+    (:category edit :subcat case :edit-op upcase)
+  (if (use-region-p)
+      (upcase-region (region-beginning) (region-end))
+    (upcase-word 1))
+  (helixel--clear-data))
+
+;; ── Comment toggle ──
+
+(helixel-define-command helixel-comment-toggle
+    (:category edit :subcat comment :edit-op comment-toggle)
+  (if (use-region-p)
+      (comment-or-uncomment-region (region-beginning) (region-end))
+    (comment-dwim nil))
+  (helixel--clear-data))
+
+;; ── Shell command filter ──
+
+(helixel-define-command helixel-shell-command
+    (:category edit :subcat shell :edit-op shell-command)
+  (let ((cmd (read-shell-command "!")))
+    (if (use-region-p)
+        (shell-command-on-region
+         (region-beginning) (region-end) cmd nil nil
+         (when current-prefix-arg
+           (get-buffer-create "*Shell Command Output*")))
+      (shell-command-on-region
+       (line-beginning-position) (line-end-position) cmd nil nil
+       (when current-prefix-arg
+         (get-buffer-create "*Shell Command Output*")))))
+  (helixel--clear-data))
+
+;; ── Text formatting ──
+
+(helixel-define-command helixel-fill
+    (:category edit :subcat fill :edit-op fill)
+  (if (use-region-p)
+      (fill-region (region-beginning) (region-end))
+    (fill-paragraph nil))
   (helixel--clear-data))
 
 (provide 'helixel-common)

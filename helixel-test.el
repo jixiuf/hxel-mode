@@ -1453,6 +1453,63 @@ Buffer starts with point at position 1."
     ;; "!!" inserted at top-left of rectangle area
     (should (string= (buffer-string) "!! line1\n line2\nGHI line3"))))
 
+;;; New operators: case, comment, shell, fill
+
+(ert-deftest helixel-test-toggle-case-region ()
+  "~ on a region toggles case of each char."
+  (helixel-test-with-buffer "Hello World"
+    (set-mark 12)
+    (helixel-toggle-case)
+    (should (string= (buffer-string) "hELLO wORLD"))))
+
+(ert-deftest helixel-test-toggle-case-char ()
+  "~ at point toggles single char and advances."
+  (helixel-test-with-buffer "hello"
+    (helixel-toggle-case)
+    (should (string= (buffer-string) "Hello"))
+    (should (= (point) 2))))
+
+(ert-deftest helixel-test-toggle-case-dot-repeat ()
+  "~ then . advances and toggles next char."
+  (helixel-test-with-buffer "Hello"
+    (helixel-toggle-case)
+    (should (string= (buffer-string) "hello"))
+    (should (= (point) 2))
+    (let ((tx helixel--last-tx))
+      (funcall (helixel-edit-op-runner (helixel-edit-op tx)) tx))
+    (should (string= (buffer-string) "hEllo"))
+    (should (= (point) 3))))
+
+(ert-deftest helixel-test-downcase-region ()
+  "gu on a region lowercases."
+  (helixel-test-with-buffer "HELLO"
+    (set-mark 6)
+    (helixel-downcase)
+    (should (string= (buffer-string) "hello"))))
+
+(ert-deftest helixel-test-upcase-region ()
+  "gU on a region uppercases."
+  (helixel-test-with-buffer "hello"
+    (set-mark 6)
+    (helixel-upcase)
+    (should (string= (buffer-string) "HELLO"))))
+
+(ert-deftest helixel-test-comment-toggle ()
+  "gc toggles comment on region or line."
+  (helixel-test-with-buffer ";; commented"
+    (emacs-lisp-mode)
+    (set-mark 13)
+    (helixel-comment-toggle)
+    (should (string= (buffer-string) "commented"))))
+
+(ert-deftest helixel-test-fill-paragraph ()
+  "gq fills paragraph to fill-column."
+  (helixel-test-with-buffer
+      "This is a long line that exceeds the column."
+    (let ((fill-column 20))
+      (helixel-fill))
+    (should (string-match-p "\n" (buffer-string)))))
+
 ;;; helixel-yank (p) rect tests
 
 (ert-deftest helixel-test-yank-rect ()
