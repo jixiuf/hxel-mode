@@ -92,13 +92,6 @@ nil means charwise, `line' means linewise, `rect' means rectangle.")
 (defvar helixel-global-mode nil
   "Enable Helixel mode in all buffers.")
 
-;; These Helixel Minor keymap modes are assigned keymaps during
-;; `helixel-normal-state' initialization.
-(defvar helixel-goto-map nil "Keymap for Goto mode.")
-(defvar helixel-view-map nil "Keymap for View mode.")
-(defvar helixel-space-map nil "Keymap for Space mode.")
-(defvar helixel-window-map nil "Keymap for Window mode.")
-(defvar helixel-textobj-map nil "Keymap for textobj mode.")
 ;; Forward declaration - defined later with keymap initializers
 (defvar helixel-state-map-alist)
 
@@ -1005,163 +998,153 @@ Example with multiple callbacks:
             (funcall cb)))
       (message "no such command '%s'" command))))
 
-(defvar helixel-normal-map
-  (let ((keymap (make-keymap)))
-    (define-prefix-command 'helixel-goto-map)
-    (define-prefix-command 'helixel-view-map)
-    (define-prefix-command 'helixel-space-map)
-    (define-prefix-command 'helixel-window-map)
-    (define-prefix-command 'helixel-textobj-map)
 
-    (suppress-keymap keymap t)
+(defvar-keymap helixel-goto-map
+  :doc "Keymap for Goto mode."
+  :full t
+  :parent goto-map
+  "l" #'helixel-go-end-line
+  "h" #'helixel-go-beginning-line
+  "s" #'helixel-go-first-nonwhitespace
+  "g" #'helixel-go-beginning-buffer
+  "e" #'helixel-go-end-buffer
+  "j" #'helixel-next-line
+  "k" #'helixel-previous-line
+  "r" #'xref-find-references
+  "d" #'xref-find-definitions
+  "y" #'eglot-find-typeDefinition
+  "i" #'eglot-find-implementation)
 
-    ;; Editing commands
-    (define-key keymap "c" #'helixel-change-thing-at-point)
-    (define-key keymap "d" #'helixel-kill-thing-at-point)
-    (define-key keymap "y" #'helixel-kill-ring-save)
-    (define-key keymap "r" #'helixel-replace)
-    (define-key keymap "R" #'helixel-replace-char)
-    ;; ;I think helixel-yank can be replaced by helixel-replace
-    ;; when helixel-replace-delete-char-p is nil
-    (define-key keymap "p" #'helixel-yank)
-    (define-key keymap "P" #'helixel-yank-before)
-    (define-key keymap "." #'helixel-repeat-edit)
-    (define-key keymap "," #'helixel-repeat-selection)
+(defvar-keymap helixel-view-map
+  :doc "Keymap for View mode."
+  :full t
+  "z" #'recenter-top-bottom)
 
-    (define-key keymap "x" #'helixel-select-line)
-    (define-key keymap "v" #'helixel-begin-selection)
-    (define-key keymap (kbd "C-v") #'helixel-select-rectangle)
-    (define-key keymap "u" #'undo)
-    (define-key keymap "U" #'undo-redo)
-    (define-key keymap "o" #'helixel-insert-newline)
-    (define-key keymap "O" #'helixel-insert-prevline)
-    (define-key keymap "<" #'helixel-indent-left)
-    (define-key keymap ">" #'helixel-indent-right)
+(defvar-keymap helixel-space-map
+  :doc "Keymap for Space mode."
+  :full t
+  "f" #'project-find-file
+  "b" #'project-switch-to-buffer
+  "j" #'project-switch-project
+  "/" #'project-find-regexp
+  "a" #'eglot-code-action-quickfix
+  "r" #'eglot-rename
+  "d" #'flymake-show-buffer-diagnostics)
 
+(defvar-keymap helixel-window-map
+  :doc "Keymap for Window mode."
+  :full t
+  "h" #'windmove-left
+  "l" #'windmove-right
+  "j" #'windmove-down
+  "k" #'windmove-up
+  "w" #'other-window
+  "v" #'split-window-right
+  "s" #'split-window-below
+  "q" #'delete-window
+  "o" #'delete-other-windows)
 
-    ;; State switching
-    (define-key keymap "i" #'helixel-insert)
-    (define-key keymap "I" #'helixel-insert-beginning-line)
-    (define-key keymap "a" #'helixel-insert-after)
-    (define-key keymap "A" #'helixel-insert-after-end-line)
-    (define-key keymap ":" #'helixel-execute-command)
-    ;; ESC is defined as the meta-prefix-key, so we can't simply
-    ;; rebind "ESC".  Instead, rebind [escape].  More info:
-    ;; https://emacs.stackexchange.com/questions/14755/
-    ;; how-to-remove-bindings-to-the-esc-prefix-key
-    (define-key keymap [escape] #'keyboard-quit)
-    (define-key keymap (kbd "DEL") (lambda () (interactive)))
+(defvar-keymap helixel-textobj-map
+  :doc "Keymap for textobj mode."
+  :parent helixel-textobj-inner-map
+  "i" helixel-textobj-inner-map
+  "a" helixel-textobj-outer-map
+  "s" #'helixel-surround-add
+  "t" #'helixel-surround-add-tag
+  "d" #'helixel-surround-delete
+  "r" #'helixel-surround-replace)
 
-    ;; Movement keys
-    (define-key keymap "h" #'helixel-backward-char)
-    (define-key keymap "l" #'helixel-forward-char)
-    (define-key keymap "j" #'helixel-next-line)
-    (define-key keymap "k" #'helixel-previous-line)
-    (define-key keymap "G" #'helixel-goto-line)
-    (define-key keymap "%" #'mark-whole-buffer)
-    (define-key keymap ";" #'helixel-action-cycle)
-    (define-key keymap (kbd "C-o") #'helixel-jump-backward)
-    (define-key keymap (kbd "C-i") #'helixel-jump-forward)
-    (define-key keymap (kbd "C-f") #'helixel-scroll-up-command)
-    (define-key keymap (kbd "C-b") #'helixel-scroll-down-command)
+(defvar-keymap helixel-normal-map
+  :doc "Keymap for Helixel normal state."
+  :full t
+  ;; Editing commands
+  "c" #'helixel-change-thing-at-point
+  "d" #'helixel-kill-thing-at-point
+  "y" #'helixel-kill-ring-save
+  "r" #'helixel-replace
+  "R" #'helixel-replace-char
+  ;; ;I think helixel-yank can be replaced by helixel-replace
+  ;; when helixel-replace-delete-char-p is nil
+  "p" #'helixel-yank
+  "P" #'helixel-yank-before
+  "." #'helixel-repeat-edit
+  "," #'helixel-repeat-selection
+  "x" #'helixel-select-line
+  "v" #'helixel-backward-word-end
+  "C-v" #'helixel-select-rectangle
+  "u" #'undo
+  "U" #'undo-redo
+  "o" #'helixel-insert-newline
+  "O" #'helixel-insert-prevline
+  "<" #'helixel-indent-left
+  ">" #'helixel-indent-right
+  ;; State switching
+  "i" #'helixel-insert
+  "I" #'helixel-insert-beginning-line
+  "a" #'helixel-insert-after
+  "A" #'helixel-insert-after-end-line
+  ":" #'helixel-execute-command
+  ;; ESC is defined as the meta-prefix-key, so we can't simply
+  ;; rebind "ESC".  Instead, rebind <escape>.  More info:
+  ;; https://emacs.stackexchange.com/questions/14755/
+  ;; how-to-remove-bindings-to-the-esc-prefix-key
+  "<escape>" #'keyboard-quit
+  "<DEL>" #'ignoree
+  ;; Movement keys
+  "h" #'helixel-backward-char
+  "l" #'helixel-forward-char
+  "j" #'helixel-next-line
+  "k" #'helixel-previous-line
+  "G" #'helixel-goto-line
+  "%" #'mark-whole-buffer
+  ";" #'helixel-action-cycle
+  "C-o" #'helixel-jump-backward
+  "C-i" #'helixel-jump-forward
+  "C-f" #'helixel-scroll-up-command
+  "C-b" #'helixel-scroll-down-command
+  ;; Digit arguments via C-u prefix
+  "1" "C-u 1"
+  "2" "C-u 2"
+  "3" "C-u 3"
+  "4" "C-u 4"
+  "5" "C-u 5"
+  "6" "C-u 6"
+  "7" "C-u 7"
+  "8" "C-u 8"
+  "9" "C-u 9"
+  "0" "C-u 0"
+  "-" "C-u -"
+  "=" #'indent-for-tab-command
+  ;; Word movement
+  "w" #'helixel-forward-word-start
+  "W" #'helixel-forward-WORD-start
+  "e" #'helixel-forward-word-end
+  "E" #'helixel-forward-WORD-end
+  "b" #'helixel-backward-word-start
+  "B" #'helixel-backward-WORD
+  ;; Unimpaired
+  "] d" #'flymake-goto-next-error
+  "[ d" #'flymake-goto-prev-error
+  ;; Prefix maps
+  "m" helixel-textobj-map
+  "g" helixel-goto-map
+  "z" helixel-view-map
+  "SPC" helixel-space-map
+  "C-w" helixel-window-map)
 
-    (define-key keymap (kbd "1") (kbd "C-u 1"))
-    (define-key keymap (kbd "2") (kbd "C-u 2"))
-    (define-key keymap (kbd "3") (kbd "C-u 3"))
-    (define-key keymap (kbd "4") (kbd "C-u 4"))
-    (define-key keymap (kbd "5") (kbd "C-u 5"))
-    (define-key keymap (kbd "6") (kbd "C-u 6"))
-    (define-key keymap (kbd "7") (kbd "C-u 7"))
-    (define-key keymap (kbd "8") (kbd "C-u 8"))
-    (define-key keymap (kbd "9") (kbd "C-u 9"))
-    (define-key keymap (kbd "0") (kbd "C-u 0"))
-    (define-key keymap (kbd "-") (kbd "C-u -"))
-    (define-key keymap (kbd "=") #'indent-for-tab-command)
+(defvar-keymap helixel-visual-map
+  :doc "Keymap for Helixel visual state.  Inherits from normal state."
+  :parent helixel-normal-map
+  "v" #'helixel-visual-exit
+  "<escape>" #'helixel-visual-exit)
 
-    (define-key keymap "w" #'helixel-forward-word-start)
-    (define-key keymap "W" #'helixel-forward-WORD-start)
-    (define-key keymap "e" #'helixel-forward-word-end)
-    (define-key keymap "E" #'helixel-forward-WORD-end)
-    (define-key keymap "b" #'helixel-backward-word-start)
-    (define-key keymap "B" #'helixel-backward-WORD)
-    (define-key keymap "v" #'helixel-backward-word-end)
+(defvar-keymap helixel-motion-map
+  :doc "Keymap for Helixel motion state."
+  :full t)
 
-    ;; Unimpared
-    (define-key keymap (kbd "]d") #'flymake-goto-next-error)
-    (define-key keymap (kbd "[d") #'flymake-goto-prev-error)
-    
-    (set-keymap-parent helixel-textobj-map helixel-textobj-inner-map)
-    (define-key helixel-textobj-map "i" helixel-textobj-inner-map)
-    (define-key helixel-textobj-map "a" helixel-textobj-outer-map)
-    (define-key helixel-textobj-map "s" #'helixel-surround-add)
-    (define-key helixel-textobj-map "t" #'helixel-surround-add-tag)
-    (define-key helixel-textobj-map "d" #'helixel-surround-delete)
-    (define-key helixel-textobj-map "r" #'helixel-surround-replace)
-    (define-key keymap (kbd "m") 'helixel-textobj-map)
-
-    ;; Goto mode
-    (define-key keymap "g" 'helixel-goto-map)
-    (define-key helixel-goto-map "l" #'helixel-go-end-line)
-    (define-key helixel-goto-map "h" #'helixel-go-beginning-line)
-    (define-key helixel-goto-map "s" #'helixel-go-first-nonwhitespace)
-    (define-key helixel-goto-map "g" #'helixel-go-beginning-buffer)
-    (define-key helixel-goto-map "e" #'helixel-go-end-buffer)
-    (define-key helixel-goto-map "j" #'helixel-next-line)
-    (define-key helixel-goto-map "k" #'helixel-previous-line)
-    (define-key helixel-goto-map "r" #'xref-find-references)
-    (define-key helixel-goto-map "d" #'xref-find-definitions)
-    (define-key helixel-goto-map "y" #'eglot-find-typeDefinition)
-    (define-key helixel-goto-map "i" #'eglot-find-implementation)
-
-
-    ;; View mode
-    (define-key keymap "z" 'helixel-view-map)
-    (define-key helixel-view-map "z" #'recenter-top-bottom)
-
-    ;; Space mode
-    (define-key keymap (kbd "SPC") 'helixel-space-map)
-    (define-key helixel-space-map "f" #'project-find-file)
-    (define-key helixel-space-map "b" #'project-switch-to-buffer)
-    (define-key helixel-space-map "j" #'project-switch-project)
-    (define-key helixel-space-map "/" #'project-find-regexp)
-    (define-key helixel-space-map "a" #'eglot-code-action-quickfix)
-    (define-key helixel-space-map "r" #'eglot-rename)
-    (define-key helixel-space-map "d" #'flymake-show-buffer-diagnostics)
-
-    ;; Window mode
-    (define-key keymap (kbd "C-w") 'helixel-window-map)
-    (define-key helixel-window-map "h" #'windmove-left)
-    (define-key helixel-window-map "l" #'windmove-right)
-    (define-key helixel-window-map "j" #'windmove-down)
-    (define-key helixel-window-map "k" #'windmove-up)
-    (define-key helixel-window-map "w" #'other-window)
-    (define-key helixel-window-map "v" #'split-window-right)
-    (define-key helixel-window-map "s" #'split-window-below)
-    (define-key helixel-window-map "q" #'delete-window)
-    (define-key helixel-window-map "o" #'delete-other-windows)
-
-    keymap)
-  "Keymap for Helixel normal state.")
-
-(defvar helixel-visual-map
-  (let ((keymap (make-sparse-keymap)))
-    (set-keymap-parent keymap helixel-normal-map)
-    (define-key keymap "v" #'helixel-visual-exit)
-    (define-key keymap [escape] #'helixel-visual-exit)
-    keymap)
-  "Keymap for Helixel visual state.  Inherits from normal state keymap.")
-
-(defvar helixel-motion-map
-  (let ((keymap (make-keymap)))
-    (suppress-keymap keymap t)
-    keymap)
-  "Keymap for Helixel motion state.")
-
-(defvar helixel-insert-map
-  (let ((keymap (make-keymap)))
-    (define-key keymap [escape] #'helixel-insert-exit)
-    keymap)
-  "Keymap for Helixel insert state.")
+(defvar-keymap helixel-insert-map
+  :doc "Keymap for Helixel insert state."
+  "<escape>" #'helixel-insert-exit)
 
 (defvar helixel-state-map-alist
   `((insert . ,helixel-insert-map)
