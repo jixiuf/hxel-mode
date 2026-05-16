@@ -128,6 +128,7 @@
 (define-key helixel-normal-map "h" #'helixel-backward-char)
 (define-key helixel-normal-map "l" #'helixel-forward-char)
 (define-key helixel-normal-map "j" #'helixel-next-line)
+(define-key helixel-normal-map "J" #'helixel-join-lines)
 (define-key helixel-normal-map "k" #'helixel-previous-line)
 (define-key helixel-normal-map "G" #'helixel-goto-line)
 (define-key helixel-normal-map "%" #'mark-whole-buffer)

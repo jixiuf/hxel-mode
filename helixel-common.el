@@ -210,10 +210,7 @@ rectangle line via `helixel--rect-replay' — no state-switching side
                     :runner (lambda (_tx) (helixel-yank)))
 (helixel-edit-defop paste-before  :display "P" :repeat-advance 'line
                     :runner (lambda (_tx) (helixel-yank-before)))
-(helixel-edit-defop indent-left   :display "<" :repeat-advance 'line
-                    :runner (lambda (_tx) (helixel-indent-left)))
-(helixel-edit-defop indent-right  :display ">" :repeat-advance 'line
-                    :runner (lambda (_tx) (helixel-indent-right)))
+
 (helixel-edit-defop insert-text   :display "i" :repeat-advance 'line
   :runner (lambda (tx)
             (let ((keys (plist-get (helixel-edit-payload tx) :keys))
@@ -223,18 +220,7 @@ rectangle line via `helixel--rect-replay' — no state-switching side
                          (helixel--execute-keys keys cmds))
                 (insert (or (plist-get (helixel-edit-payload tx) :text)
                             ""))))))
-(helixel-edit-defop toggle-case   :display "~" :repeat-advance nil
-  :runner (lambda (_tx) (helixel-toggle-case)))
-(helixel-edit-defop downcase      :display "gu" :repeat-advance 'line
-  :runner (lambda (_tx) (helixel-downcase)))
-(helixel-edit-defop upcase        :display "gU" :repeat-advance 'line
-  :runner (lambda (_tx) (helixel-upcase)))
-(helixel-edit-defop comment-toggle :display "gc" :repeat-advance nil
-  :runner (lambda (_tx) (helixel-comment-toggle)))
-(helixel-edit-defop shell-command :display "!" :repeat-advance 'line
-  :runner (lambda (_tx) (helixel-shell-command)))
-(helixel-edit-defop fill          :display "gq" :repeat-advance nil
-  :runner (lambda (_tx) (helixel-fill)))
+
 
 ;; ── Selection type validator ──
 
@@ -413,19 +399,19 @@ Used to support cycling through the kill ring after a replace.")
 ;; ── Indent ──
 
 (helixel-define-command helixel-indent-left
-    (:category edit :subcat indent-left :edit-op indent-left)
+    (:repeatable "<" :repeat-advance 'line)
   (call-interactively #'indent-rigidly-left)
   (helixel--clear-data))
 
 (helixel-define-command helixel-indent-right
-    (:category edit :subcat indent-right :edit-op indent-right)
+    (:repeatable ">" :repeat-advance 'line)
   (call-interactively #'indent-rigidly-right)
   (helixel--clear-data))
 
 ;; ── Case operations ──
 
 (helixel-define-command helixel-toggle-case
-    (:category edit :subcat case :edit-op toggle-case)
+    (:repeatable "~" :subcat case)
   (if (use-region-p)
       (let ((text (buffer-substring (region-beginning) (region-end))))
         (delete-region (region-beginning) (region-end))
@@ -439,14 +425,14 @@ Used to support cycling through the kill ring after a replace.")
   (helixel--clear-data))
 
 (helixel-define-command helixel-downcase
-    (:category edit :subcat case :edit-op downcase)
+    (:repeatable "gu" :repeat-advance 'line :subcat case)
   (if (use-region-p)
       (downcase-region (region-beginning) (region-end))
     (downcase-word 1))
   (helixel--clear-data))
 
 (helixel-define-command helixel-upcase
-    (:category edit :subcat case :edit-op upcase)
+    (:repeatable "gU" :repeat-advance 'line :subcat case)
   (if (use-region-p)
       (upcase-region (region-beginning) (region-end))
     (upcase-word 1))
@@ -455,7 +441,7 @@ Used to support cycling through the kill ring after a replace.")
 ;; ── Comment toggle ──
 
 (helixel-define-command helixel-comment-toggle
-    (:category edit :subcat comment :edit-op comment-toggle)
+    (:repeatable "gc" :subcat comment)
   (if (use-region-p)
       (comment-or-uncomment-region (region-beginning) (region-end))
     (comment-dwim nil))
@@ -464,7 +450,7 @@ Used to support cycling through the kill ring after a replace.")
 ;; ── Shell command filter ──
 
 (helixel-define-command helixel-shell-command
-    (:category edit :subcat shell :edit-op shell-command)
+    (:repeatable "!" :repeat-advance 'line :subcat shell)
   (let ((cmd (read-shell-command "!")))
     (if (use-region-p)
         (shell-command-on-region
@@ -480,11 +466,28 @@ Used to support cycling through the kill ring after a replace.")
 ;; ── Text formatting ──
 
 (helixel-define-command helixel-fill
-    (:category edit :subcat fill :edit-op fill)
+    (:repeatable "gq" :subcat fill)
   (if (use-region-p)
       (fill-region (region-beginning) (region-end))
     (fill-paragraph nil))
   (helixel--clear-data))
+
+;; ── Join lines ──
+
+(helixel-edit-defop join-lines :display "J" :repeat-advance nil
+  :runner (lambda (tx)
+            (let ((n (or (plist-get (helixel-edit-payload tx) :count) 2)))
+              (dotimes (_ (1- n))
+                (join-line 1)))))
+
+(helixel-define-command helixel-join-lines
+    (:edit-op join-lines :params (&optional count)
+     :record-payload (:count (max (or count 1) 2)))
+  (interactive "p")
+  (let ((n (max (or count 1) 2)))
+    (dotimes (_ (1- n))
+      (join-line 1))
+    (helixel--clear-data)))
 
 (provide 'helixel-common)
 ;;; helixel-common.el ends here
