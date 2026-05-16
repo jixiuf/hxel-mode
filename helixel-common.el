@@ -58,9 +58,19 @@ at the appropriate offset on the selected line:
       (helixel-select-line n))
     (when entry-kind
       ;; Position cursor for key/text insertion.
-      (goto-char (if (eq entry-kind 'append)
-                     (line-end-position)
-                   (line-beginning-position)))
+      ;; Use region-beginning/region-end because helixel-select-line
+      ;; leaves point on the LAST selected line, so
+      ;; line-beginning-position/line-end-position would target
+      ;; the wrong line for multi-line selections.
+      (if (eq entry-kind 'append)
+          (goto-char (region-end))
+        (let ((rend (region-end)))
+          (goto-char (region-beginning))
+          ;; If point landed on the mark (zero-length region),
+          ;; restore the visible region so the selection highlight
+          ;; shows the full target range.
+          (when (= (point) (mark))
+            (set-mark rend))))
       (let ((off (helixel-sel-insert-cursor-offset ctx)))
         (when off (forward-char off))))))
 
@@ -692,8 +702,7 @@ rectangle line via `helixel--rect-replay' — no state-switching side
             (let ((keys (plist-get (helixel-edit-payload tx) :keys))
                   (cmds (plist-get (helixel-edit-payload tx) :commands)))
               (if (or keys cmds)
-                  (progn (deactivate-mark)
-                         (helixel--execute-keys keys cmds))
+                  (progn (helixel--execute-keys keys cmds))
                 (insert (or (plist-get (helixel-edit-payload tx) :text)
                             ""))))))
 

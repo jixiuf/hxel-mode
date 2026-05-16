@@ -5830,6 +5830,93 @@ goto-char(nil) when match data was stale, jumping to buffer start."
       (helixel-repeat-edit)
       (should (string= (buffer-string) "world")))))
 
+;; ── , comma repeat-selection with insert-text (advance) ──
+
+(ert-deftest helixel-test-repeat-selection-insert-advance ()
+  "`, after xi<text><ESC> advances to next line and shows cursor at bol."
+  :tags '(repeat comma)
+  (helixel-test-with-buffer "line one\nline two\nline three\n"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make
+           'insert-text
+           (helixel-sel-create
+            'line
+            '(:dir forward :count 1 :entry-kind insert)
+            #'helixel--recreate-line "x")
+           :text "foo"))
+    (helixel-repeat-selection)
+    ;; Cursor at bol of line 2, region shows the target line.
+    (should (region-active-p))
+    (should (= (point) (line-beginning-position)))
+    (should (string= (buffer-substring (line-beginning-position)
+                                       (line-end-position))
+                     "line two"))))
+
+(ert-deftest helixel-test-repeat-selection-insert-double-comma ()
+  "`, , ` advances twice then shows cursor at bol of line 3."
+  :tags '(repeat comma)
+  (helixel-test-with-buffer "line one\nline two\nline three\nline four\n"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make
+           'insert-text
+           (helixel-sel-create
+            'line
+            '(:dir forward :count 1 :entry-kind insert)
+            #'helixel--recreate-line "x")
+           :text "foo"))
+    (helixel-repeat-selection)
+    (helixel-repeat-selection)
+    (should (region-active-p))
+    (should (= (point) (line-beginning-position)))
+    (should (string= (buffer-substring (line-beginning-position)
+                                       (line-end-position))
+                     "line three"))))
+
+(ert-deftest helixel-test-repeat-selection-insert-comma-then-dot ()
+  "`, then . after xi<text><ESC> inserts at the advanced position."
+  :tags '(repeat comma)
+  (helixel-test-with-buffer "line one\nline two\nline three\n"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make
+           'insert-text
+           (helixel-sel-create
+            'line
+            '(:dir forward :count 1 :entry-kind insert)
+            #'helixel--recreate-line "x")
+           :text "foo"))
+    (helixel-repeat-selection)          ; advance to line 2
+    (helixel-repeat-edit)               ; insert at bol of line 2
+    (should (string= (buffer-string)
+                     "line one\nfooline two\nline three\n"))))
+
+(ert-deftest helixel-test-repeat-selection-insert-count-prefix ()
+  "3 , after xi<text><ESC> advances 3 times, then . inserts once."
+  :tags '(repeat comma)
+  (helixel-test-with-buffer
+      "line one\nline two\nline three\nline four\nline five\n"
+    (goto-char 1)
+    (setq helixel--last-tx
+          (helixel-edit-make
+           'insert-text
+           (helixel-sel-create
+            'line
+            '(:dir forward :count 1 :entry-kind insert)
+            #'helixel--recreate-line "x")
+           :text "foo"))
+    (helixel-repeat-selection 3)        ; advance to line 4
+    (should (region-active-p))
+    (should (= (point) (line-beginning-position)))
+    (should (string= (buffer-substring (line-beginning-position)
+                                       (line-end-position))
+                     "line four"))
+    (helixel-repeat-edit)               ; insert at bol of line 4
+    (should (string= (buffer-string)
+                     (concat "line one\nline two\nline three\n"
+                             "fooline four\nline five\n")))))
+
 ;; ── segment-based replay: cursor movement between insertions ──
 
 (ert-deftest helixel-test-repeat-search-insert-move-forward-dot ()
@@ -6551,6 +6638,51 @@ Verifies: sel kind stays `line' through insert recording,
       ;; Verify "hello" went to line 2 (at bol).
       (should (string= (buffer-string)
                        "line1\nhelloline2\nline3\n")))))
+
+(ert-deftest helixel-test-repeat-line-advance-real-insert-count2 ()
+  "`. ` after xxihello<ESC> (2-line sel) advances 2 lines.
+Verifies: point lands at bol of the correct line (not the
+wrong line due to line-beginning-position on the last
+selected line)."
+  (helixel-test-with-buffer
+      "line1\nline2\nline3\nline4\nline5\n"
+    (goto-char 3)
+    ;; Simulate xxihello<ESC>: 2-line forward selection + insert
+    (let ((helixel--repeat-sel-ctx
+           (helixel-sel-create 'line
+               '(:dir forward :count 2 :entry-kind insert)
+               #'helixel--recreate-line "L")))
+      (helixel--record-edit 'insert-text))
+    (setq helixel--last-tx
+          (helixel-edit-with-payload helixel--last-tx :text "hello"))
+    ;; Point on line 1 before dot-repeat.
+    (should (= (line-number-at-pos) 1))
+    (helixel-repeat-edit)
+    ;; Should have advanced to line 3 (skip 2-line selection) and
+    ;; inserted at bol of line 3 (NOT line 4).
+    (should (string= (buffer-string)
+                     "line1\nline2\nhelloline3\nline4\nline5\n"))))
+
+(ert-deftest helixel-test-repeat-line-advance-insert-count2 ()
+  "`. ` after xxihello<ESC> (count=2) advances past 2 lines.
+Second `. ` advances from line 3 to line 5."
+  (helixel-test-with-buffer
+      "line1\nline2\nline3\nline4\nline5\nline6\nline7\n"
+    (goto-char 3)
+    (let ((helixel--repeat-sel-ctx
+           (helixel-sel-create 'line
+               '(:dir forward :count 2 :entry-kind insert)
+               #'helixel--recreate-line "L")))
+      (helixel--record-edit 'insert-text))
+    (setq helixel--last-tx
+          (helixel-edit-with-payload helixel--last-tx :text "hello"))
+    (helixel-repeat-edit)               ; insert on lines 3-4 target
+    (should (string= (buffer-string)
+                     "line1\nline2\nhelloline3\nline4\nline5\nline6\nline7\n"))
+    (helixel-repeat-edit)               ; advance 2 more → lines 5-6 target
+    (should (string= (buffer-string)
+                     (concat "line1\nline2\nhelloline3\n"
+                             "line4\nhelloline5\nline6\nline7\n")))))
 
 (ert-deftest helixel-test-repeat-line-insert-move-forward-dot ()
   "`. ` after xi<M-f>foo<ESC> replays cursor-movement via kmacro keys.

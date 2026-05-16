@@ -736,29 +736,32 @@ without executing the operator.
 For operators with :repeat-advance (e.g. insert-text, replace-char)
 this advances to the next target before showing the selection;
 for operators without advance (e.g. kill, change) it recreates
-the selection in place.  Insert-text operators deactivate the mark
-so only the cursor position is shown.
+the selection in place.
+
+The full region is shown so you can preview what will be affected
+by a subsequent `.`.
 
 In visual state extends the current selection; in normal state
 recreates it from scratch.  With COUNT, repeats the step that many
 times.
 
 Sets `helixel--repeat-has-preview' so a subsequent `.` uses this
-region directly instead of recreating."
+region/position directly instead of advancing again."
   (interactive "p")
   (unless helixel--last-tx
     (user-error "No previous edit"))
-  (let ((sel-ctx (helixel-edit-sel helixel--last-tx)))
+  (let* ((tx helixel--last-tx)
+         (sel-ctx (helixel-edit-sel tx)))
     (unless sel-ctx
       (user-error (concat "Previous edit has no selection to repeat."
                           "  Use a textobj (e.g. ciw)"
                           " or line/rect selection first")))
     (let ((n (or count 1)))
-      (let ((ctx (if (> n 1)
-                     (helixel-sel-update-ctx sel-ctx :count n)
-                   sel-ctx)))
-        (helixel--recreate-selection ctx)
-        (setq helixel--repeat-has-preview t)))))
+      (dotimes (_ n)
+        (helixel--repeat-do-advance tx)
+        (helixel--recreate-selection sel-ctx))
+
+      (setq helixel--repeat-has-preview t))))
 
 (defun helixel-repeat-edit-pick ()
   "Choose a past edit from `helixel--edit-ring' and replay it.
