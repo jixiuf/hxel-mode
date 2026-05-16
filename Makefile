@@ -100,14 +100,14 @@ ctx-lint:
 	for file in $(FILES); do \
 	  case "$$file" in helixel-edit.el) continue ;; esac; \
 	  for key in $(CTX_UNIQUE); do \
-	    if grep -qn "plist-get.*$$key" "$$file" 2>/dev/null; then \
+	    if grep -qn "plist-get.*\<$$key\>" "$$file" 2>/dev/null; then \
 	      echo "$$file: FATAL — raw plist-get with ctx-unique key $$key:"; \
-	      grep -n "plist-get.*$$key" "$$file"; \
+	      grep -n "plist-get.*\<$$key\>" "$$file"; \
 	      err=1; \
 	    fi; \
 	  done; \
 	  for key in $(CTX_SUSPECT); do \
-	    matches=$$(grep -n "plist-get.*$$key" "$$file" 2>/dev/null) || true; \
+	    matches=$$(grep -n "plist-get.*\<$$key\>" "$$file" 2>/dev/null) || true; \
 	    if [ -n "$$matches" ]; then \
 	      echo "$$file: REVIEW — plist-get with key $$key (verify it is not ctx):"; \
 	      echo "$$matches"; \

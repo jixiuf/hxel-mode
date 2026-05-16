@@ -1157,6 +1157,98 @@ Buffer starts with point at position 1."
       ;; Buffer unchanged
       (should (string= (buffer-string) "hello")))))
 
+;;; helixel-replace-pop tests
+
+(ert-deftest helixel-test-replace-pop-no-region ()
+  "Test replace-pop cycles kill ring after no-region replace."
+  (helixel-test-with-buffer "hello world"
+    (let* ((kill-ring (list "BBB" "AAA"))
+           (kill-ring-yank-pointer kill-ring)
+           (helixel-replace-delete-char-p t))
+      (setq last-command nil)
+      (helixel-replace)
+      (should (string= (buffer-string) "BBBello world"))
+      (setq last-command 'helixel-replace)
+      (helixel-replace-pop)
+      (should (string= (buffer-string) "AAAello world"))
+      (helixel-replace-pop)
+      (should (string= (buffer-string) "BBBello world")))))
+
+(ert-deftest helixel-test-replace-pop-no-delete-char ()
+  "Test replace-pop with `helixel-replace-delete-char-p' nil."
+  (helixel-test-with-buffer "hello"
+    (let* ((kill-ring (list "BBB" "AAA"))
+           (kill-ring-yank-pointer kill-ring)
+           (helixel-replace-delete-char-p nil))
+      (setq last-command nil)
+      (helixel-replace)
+      (should (string= (buffer-string) "BBBhello"))
+      (setq last-command 'helixel-replace)
+      (helixel-replace-pop)
+      (should (string= (buffer-string) "AAAhello")))))
+
+(ert-deftest helixel-test-replace-pop-charwise-region ()
+  "Test replace-pop after charwise region replace."
+  (helixel-test-with-buffer "hello brave world"
+    (let* ((kill-ring (list "cruel" "nice"))
+           (kill-ring-yank-pointer kill-ring))
+      ;; Select "brave"
+      (push-mark 7 t t)
+      (goto-char 12)
+      (setq helixel--selection-type nil)
+      (setq last-command nil)
+      (helixel-replace)
+      (should (string= (buffer-string) "hello cruel world"))
+      (setq last-command 'helixel-replace)
+      (helixel-replace-pop)
+      (should (string= (buffer-string) "hello nice world")))))
+
+(ert-deftest helixel-test-replace-pop-linewise-selection ()
+  "Test replace-pop after line-wise selection replace."
+  (helixel-test-with-buffer
+      "first line\nsecond line\nthird line"
+    (let* ((kill-ring (list "AAA" "BBB"))
+           (kill-ring-yank-pointer kill-ring))
+      (goto-char 12)
+      (helixel-select-line)
+      (setq last-command nil)
+      (helixel-replace)
+      (should (string= (buffer-string) "first line\nAAA\nthird line"))
+      (setq last-command 'helixel-replace)
+      (helixel-replace-pop)
+      (should (string= (buffer-string) "first line\nBBB\nthird line")))))
+
+(ert-deftest helixel-test-replace-pop-wrong-last-command ()
+  "Test replace-pop errors when previous command was not a replace."
+  (helixel-test-with-buffer "hello"
+    (let* ((kill-ring (list "AAA" "BBB"))
+           (kill-ring-yank-pointer kill-ring))
+      (setq last-command 'self-insert-command)
+      (should-error (helixel-replace-pop)))))
+
+(ert-deftest helixel-test-replace-pop-no-bounds ()
+  "Test replace-pop errors with no replace-pop-bounds (rect case)."
+  (helixel-test-with-buffer "hello"
+    (let* ((kill-ring (list "AAA"))
+           (kill-ring-yank-pointer kill-ring)
+           (helixel--replace-pop-bounds nil))
+      (setq last-command 'helixel-replace)
+      (should-error (helixel-replace-pop)))))
+
+(ert-deftest helixel-test-replace-pop-with-arg ()
+  "Test replace-pop with numeric argument skips kills."
+  (helixel-test-with-buffer "hello"
+    (let* ((kill-ring (list "CCC" "BBB" "AAA"))
+           (kill-ring-yank-pointer kill-ring)
+           (helixel-replace-delete-char-p t))
+      (setq last-command nil)
+      (helixel-replace)
+      (should (string= (buffer-string) "CCCello"))
+      (setq last-command 'helixel-replace)
+      ;; Pop with arg 1 advances one kill forward (CCC→BBB)
+      (helixel-replace-pop 1)
+      (should (string= (buffer-string) "BBBello")))))
+
 ;;; Integration: select-line -> kill -> yank round-trip
 
 (ert-deftest helixel-test-linewise-round-trip ()
