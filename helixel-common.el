@@ -969,28 +969,94 @@ Used to support cycling through the kill ring after a replace.")
     (helixel--register-consume)))
 
 ;; ── Indent ──
+;; helixel--replay-multiplier is bound by the op runner during `.`
+;; replay so that the indent count is taken from the amalgamated
+;; :multiplier payload instead of the interactive prefix.
+
+(defvar helixel--replay-multiplier nil
+  "When non-nil, overrides the indent count during `.` replay.
+Set by the op runner from the transaction's :multiplier payload.")
 
 (helixel-define-operator helixel-indent-left
     (:op indent-left :display "<" :repeat-advance 'line
      :params (&optional count))
   (interactive "p")
-  (let ((n (or count 1)))
-    (helixel--record-edit 'indent-left)
-    (if (use-region-p)
-        (indent-rigidly (region-beginning) (region-end) (- n))
-      (indent-rigidly (line-beginning-position) (line-end-position) (- n))))
+  (let* ((n (or helixel--replay-multiplier count 1))
+         (consecutive-p nil))
+    (unless (use-region-p)
+      ;; Consecutive (same op): reuse selection, indent 1 level,
+      ;; amalgamate multiplier into the last tx.
+      (when-let* ((tx helixel--last-tx)
+                  (sel (helixel-edit-sel tx)))
+        (when (eq (helixel-edit-op tx) 'indent-left)
+          (when-let* ((m (helixel-edit-marker tx))
+                      (pos (marker-position m)))
+            (goto-char pos))
+          (let ((helixel--inhibit-action-track t))
+            (helixel--recreate-selection sel))
+          (indent-rigidly (region-beginning) (region-end) (- 1))
+          (let* ((payload (helixel-edit-payload tx))
+                 (mult (or (plist-get payload :multiplier) 1)))
+            (setf (helixel-edit-payload tx)
+                  (plist-put (copy-sequence payload)
+                             :multiplier (1+ mult))))
+          (goto-char (region-beginning))
+          (setq consecutive-p t))))
+    (unless consecutive-p
+      (if (use-region-p)
+          (indent-rigidly (region-beginning) (region-end) (- n))
+        (indent-rigidly (line-beginning-position) (line-end-position)
+                        (- n)))
+      (when (use-region-p)
+        (goto-char (region-beginning)))
+      (helixel--record-edit 'indent-left :multiplier n)))
   (helixel--clear-data))
+
+(put 'indent-left 'helixel-op-runner
+     (lambda (tx)
+       (let ((helixel--replay-multiplier
+              (or (plist-get (helixel-edit-payload tx) :multiplier) 1)))
+         (helixel-indent-left))))
 
 (helixel-define-operator helixel-indent-right
     (:op indent-right :display ">" :repeat-advance 'line
      :params (&optional count))
   (interactive "p")
-  (let ((n (or count 1)))
-    (helixel--record-edit 'indent-right)
-    (if (use-region-p)
-        (indent-rigidly (region-beginning) (region-end) n)
-      (indent-rigidly (line-beginning-position) (line-end-position) n)))
+  (let* ((n (or helixel--replay-multiplier count 1))
+         (consecutive-p nil))
+    (unless (use-region-p)
+      ;; Consecutive (same op): reuse selection, indent 1 level,
+      ;; amalgamate multiplier into the last tx.
+      (when-let* ((tx helixel--last-tx)
+                  (sel (helixel-edit-sel tx)))
+        (when (eq (helixel-edit-op tx) 'indent-right)
+          (when-let* ((m (helixel-edit-marker tx))
+                      (pos (marker-position m)))
+            (goto-char pos))
+          (let ((helixel--inhibit-action-track t))
+            (helixel--recreate-selection sel))
+          (indent-rigidly (region-beginning) (region-end) 1)
+          (let* ((payload (helixel-edit-payload tx))
+                 (mult (or (plist-get payload :multiplier) 1)))
+            (setf (helixel-edit-payload tx)
+                  (plist-put (copy-sequence payload)
+                             :multiplier (1+ mult))))
+          (goto-char (region-beginning))
+          (setq consecutive-p t))))
+    (unless consecutive-p
+      (if (use-region-p)
+          (indent-rigidly (region-beginning) (region-end) n)
+        (indent-rigidly (line-beginning-position) (line-end-position) n))
+      (when (use-region-p)
+        (goto-char (region-beginning)))
+      (helixel--record-edit 'indent-right :multiplier n)))
   (helixel--clear-data))
+
+(put 'indent-right 'helixel-op-runner
+     (lambda (tx)
+       (let ((helixel--replay-multiplier
+              (or (plist-get (helixel-edit-payload tx) :multiplier) 1)))
+         (helixel-indent-right))))
 
 ;; ── Case operations ──
 

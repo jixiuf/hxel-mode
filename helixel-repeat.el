@@ -275,10 +275,12 @@ Third-party selection kinds add entries here."
       (search-failed nil))))
 
 (defun helixel--repeat-advance-line (tx _advance-tag)
-  "Advance TX to next/prev line.  Returns nil at buffer edge."
+  "Advance TX past the selection's line count.
+Returns nil at buffer edge."
   (let* ((sel (helixel-edit-sel tx))
-         (dir (if (eq (helixel-sel-line-dir sel) 'backward) -1 1)))
-    (= (forward-line dir) 0)))
+         (dir (if (eq (helixel-sel-line-dir sel) 'backward) -1 1))
+         (count (helixel-sel-line-count sel)))
+    (= (forward-line (* dir count)) 0)))
 
 (defun helixel--repeat-advance-none (_tx _advance-tag)
   "No auto-advance — target stays at point.  Always returns t."
