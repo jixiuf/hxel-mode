@@ -1219,12 +1219,24 @@ Buffer starts with point at position 1."
       (should (string= (buffer-string) "first line\nBBB\nthird line")))))
 
 (ert-deftest helixel-test-replace-pop-wrong-last-command ()
-  "Test replace-pop errors when previous command was not a replace."
+  "Test replace-pop browses kill-ring when previous command was not a replace."
   (helixel-test-with-buffer "hello"
-    (let* ((kill-ring (list "AAA" "BBB"))
-           (kill-ring-yank-pointer kill-ring))
+    (let* ((kill-ring (list "BBB" "AAA"))
+           (kill-ring-yank-pointer kill-ring)
+           (helixel-replace-delete-char-p t))
       (setq last-command 'self-insert-command)
-      (should-error (helixel-replace-pop)))))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (_prompt collection &rest _)
+                   (car collection))))
+        (helixel-replace-pop)
+        (should (string= (buffer-string) "BBBello"))
+        ;; Subsequent calls should cycle
+        (setq last-command 'helixel-replace-pop)
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (_prompt _collection &rest _)
+                     (error "should not be called"))))
+          (helixel-replace-pop)
+          (should (string= (buffer-string) "AAAello")))))))
 
 (ert-deftest helixel-test-replace-pop-no-bounds ()
   "Test replace-pop errors with no replace-pop-bounds (rect case)."
