@@ -157,7 +157,7 @@ Returns the match position (point moves to \=`match-end')."
 So the next edit command (c/d/y) records it for `.` and `,` repeat."
   (when-let* ((pat (helixel--action-get helixel--repeat-data :pattern))
               (dir (helixel-repeat-dir)))
-    (setq helixel--repeat-sel-ctx
+    (helixel--repeat-sel-set
           (helixel-sel-create
            'search `(:pattern ,pat :dir ,dir)
            #'helixel--recreate-search

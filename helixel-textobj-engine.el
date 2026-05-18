@@ -1,4 +1,4 @@
-;;; helixel-textobj-engine.el --- Text object selection engine for Helixel  -*- lexical-binding: t; -*-
+;;; helixel-textobj-engine.el --- Text objects engine -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026  jixiuf
 
@@ -37,6 +37,7 @@
 (require 'helixel-edit)
 
 (declare-function helixel--recreate-textobj "helixel-textobj")
+(declare-function helixel--repeat-sel-set "helixel-repeat")
 
 (defvar helixel--selection-type)
 (defvar helixel--repeat-sel-ctx)
@@ -1186,10 +1187,10 @@ the same multiplier."
     (let ((cmd this-command)
           (n (or count 1))
           (delim delimiter))
-      (setq helixel--selection-type 'textobj
-            helixel--repeat-sel-ctx
-            (helixel-sel-create
-             'textobj `(:command ,cmd :count ,n :delimiter ,delim)
+      (setq helixel--selection-type 'textobj)
+      (helixel--repeat-sel-set
+       (helixel-sel-create
+        'textobj `(:command ,cmd :count ,n :delimiter ,delim)
              #'helixel--recreate-textobj
              ;; display closure
              (lambda (c)

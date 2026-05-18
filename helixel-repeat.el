@@ -64,6 +64,18 @@ Written by selection commands (textobj / line / rect / movement),
 consumed by `helixel--record-edit'.  See `helixel-sel' struct in
 helixel-edit.el for the set of recognised :kind values.")
 
+(defsubst helixel--repeat-sel-set (sel)
+  "Set `helixel--repeat-sel-ctx' to SEL."
+  (setq helixel--repeat-sel-ctx sel))
+
+(defsubst helixel--repeat-sel-get ()
+  "Return `helixel--repeat-sel-ctx'."
+  helixel--repeat-sel-ctx)
+
+(defsubst helixel--repeat-sel-clear ()
+  "Clear `helixel--repeat-sel-ctx'."
+  (setq helixel--repeat-sel-ctx nil))
+
 ;; ---------------------------------------------------------------------------
 ;; Last Edit Transaction (stored as helixel--last-tx)
 
@@ -192,8 +204,8 @@ The `helixel-define-command' macro handles this automatically."
         (setf (helixel-edit-display-field new-tx)
               (helixel-edit-op-display operator tx))
         (setq tx new-tx))
-      (setq helixel--repeat-sel-ctx nil
-            helixel--last-tx tx)
+      (helixel--repeat-sel-clear)
+      (setq helixel--last-tx tx)
       (helixel--edit-ring-push tx)
       (helixel--live-edit-set tx)
       (helixel-action-commit))))

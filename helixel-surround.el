@@ -53,6 +53,8 @@
 
 (defvar helixel--surround-pairs)
 (defvar helixel--repeat-sel-ctx)
+(declare-function helixel--repeat-sel-get "helixel-repeat")
+(declare-function helixel--repeat-sel-set "helixel-repeat")
 (declare-function helixel-up-paren "helixel-textobj-engine")
 (declare-function helixel--record-edit "helixel-repeat")
 (declare-function helixel-action-start "helixel-action")
@@ -241,7 +243,7 @@ Reads character, looks up new delimiter, deletes old, adds new."
                           (helixel-delimiter-close new-d))
     (helixel-action-start 'edit 'surround-replace)
     (helixel--record-edit 'surround-replace :new-char new-char)
-    (setq helixel--repeat-sel-ctx
+     (helixel--repeat-sel-set
           (helixel-sel-create
            'surround `(:delimiter ,new-d)
            (lambda (_) nil)  ; surround recreate is a no-op
@@ -297,7 +299,7 @@ D is the tag delimiter plist used to locate the tags."
     (helixel--surround-add open close)
     (helixel-action-start 'edit 'surround-add)
     (helixel--record-edit 'surround-add :char char)
-    (setq helixel--repeat-sel-ctx
+     (helixel--repeat-sel-set
           (helixel-sel-create
            'surround `(:delimiter ,(if is-block
                                       (helixel--make-block-delimiter open close)
@@ -318,7 +320,7 @@ D is the tag delimiter plist used to locate the tags."
     (helixel--surround-add-tag tag)
     (helixel-action-start 'edit 'surround-add)
     (helixel--record-edit 'surround-add-tag :tag tag)
-    (setq helixel--repeat-sel-ctx
+     (helixel--repeat-sel-set
           (helixel-sel-create
            'surround `(:delimiter ,(helixel--make-tag-delimiter))
            (lambda (_) nil)
@@ -332,7 +334,7 @@ D is the tag delimiter plist used to locate the tags."
   "Delete surrounding delimiters of the current selection.
 Uses `helixel--repeat-sel-ctx' to determine the delimiter type."
   (interactive)
-  (let ((sel-ctx helixel--repeat-sel-ctx)
+  (let ((sel-ctx (helixel--repeat-sel-get))
         d)
     (unless (and sel-ctx (setq d (helixel-sel-surround-delimiter sel-ctx)))
       (if (use-region-p)
@@ -352,7 +354,7 @@ Uses `helixel--repeat-sel-ctx' to determine the delimiter type."
 Reads `helixel--repeat-sel-ctx' for delimiter type.
 Prompts per type: tag `read-string', all others `read-char'."
   (interactive)
-  (let ((sel-ctx helixel--repeat-sel-ctx)
+  (let ((sel-ctx (helixel--repeat-sel-get))
         d)
     (unless (and sel-ctx (setq d (helixel-sel-surround-delimiter sel-ctx)))
       (if (use-region-p)
@@ -370,7 +372,7 @@ Prompts per type: tag `read-string', all others `read-char'."
            (helixel-action-start 'edit 'surround-replace)
            (helixel--record-edit 'surround-replace :tag new-tag
                                  :surround-type 'tag)
-           (setq helixel--repeat-sel-ctx
+            (helixel--repeat-sel-set
                  (helixel-sel-create
                   'surround `(:delimiter ,(helixel--make-tag-delimiter))
                   (lambda (_) nil)

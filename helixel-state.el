@@ -276,10 +276,10 @@ No-op during dot-repeat replay."
                  (last (car moves)))
             (if (and last (eq (car last) cmd))
                 (setcdr last (1+ (cdr last)))
-              (setq helixel--repeat-sel-ctx
+               (helixel--repeat-sel-set
                     (helixel-sel-update-ctx ctx :moves
                                             (cons entry moves)))))
-        (setq helixel--repeat-sel-ctx
+         (helixel--repeat-sel-set
               (helixel-sel-create 'movement
                                   `(:moves (,entry))
                                   #'helixel--recreate-movement
@@ -298,29 +298,29 @@ Sets up change-hook recording and switches to insert state."
     (:category state :subcat insert)
   (cond
    ;; Search context: refine the search sel with entry-kind
-   ((and helixel--repeat-sel-ctx
-         (eq (helixel-sel-get-kind helixel--repeat-sel-ctx) 'search))
-    (setq helixel--repeat-sel-ctx
-          (helixel-sel-update-ctx helixel--repeat-sel-ctx
+   ((and (helixel--repeat-sel-get)
+         (eq (helixel-sel-get-kind (helixel--repeat-sel-get)) 'search))
+     (helixel--repeat-sel-set
+          (helixel-sel-update-ctx (helixel--repeat-sel-get)
                                   :entry-kind 'insert))
     (goto-char (region-beginning)))
    ;; Line selection: preserve sel for `.` auto-advance
-   ((and helixel--repeat-sel-ctx
-         (eq (helixel-sel-get-kind helixel--repeat-sel-ctx) 'line))
-    (setq helixel--repeat-sel-ctx
-          (helixel-sel-update-ctx helixel--repeat-sel-ctx
+   ((and (helixel--repeat-sel-get)
+         (eq (helixel-sel-get-kind (helixel--repeat-sel-get)) 'line))
+     (helixel--repeat-sel-set
+          (helixel-sel-update-ctx (helixel--repeat-sel-get)
                                   :entry-kind 'insert))
     (goto-char (region-beginning)))
    ;; Manual region
    ((use-region-p)
-    (setq helixel--repeat-sel-ctx
+     (helixel--repeat-sel-set
           (helixel-sel-create
            'insert-selection-start nil
            #'helixel--recreate-insert-selection-start "is"))
     (goto-char (region-beginning)))
    ;; No context
    (t
-    (setq helixel--repeat-sel-ctx nil)))
+    (helixel--repeat-sel-clear)))
   (helixel--record-edit 'insert-text)
   (setq helixel--change-track-marker (point-marker))
   (helixel--enter-insert))
@@ -380,22 +380,22 @@ Also preserve highlights when `rectangle-mark-mode' is active."
     (:category state :subcat insert)
   (cond
    ;; Search context: refine the search sel with entry-kind
-   ((and helixel--repeat-sel-ctx
-         (eq (helixel-sel-get-kind helixel--repeat-sel-ctx) 'search))
-    (setq helixel--repeat-sel-ctx
-          (helixel-sel-update-ctx helixel--repeat-sel-ctx
+   ((and (helixel--repeat-sel-get)
+         (eq (helixel-sel-get-kind (helixel--repeat-sel-get)) 'search))
+     (helixel--repeat-sel-set
+          (helixel-sel-update-ctx (helixel--repeat-sel-get)
                                   :entry-kind 'append))
     (goto-char (region-end)))
    ;; Line selection: preserve sel for `.` auto-advance
-   ((and helixel--repeat-sel-ctx
-         (eq (helixel-sel-get-kind helixel--repeat-sel-ctx) 'line))
-    (setq helixel--repeat-sel-ctx
-          (helixel-sel-update-ctx helixel--repeat-sel-ctx
+   ((and (helixel--repeat-sel-get)
+         (eq (helixel-sel-get-kind (helixel--repeat-sel-get)) 'line))
+     (helixel--repeat-sel-set
+          (helixel-sel-update-ctx (helixel--repeat-sel-get)
                                   :entry-kind 'append))
     (goto-char (region-end)))
    ;; Manual region
    ((use-region-p)
-    (setq helixel--repeat-sel-ctx
+     (helixel--repeat-sel-set
           (helixel-sel-create
            'insert-selection-end nil
            #'helixel--recreate-insert-selection-end "ie"))
@@ -404,7 +404,7 @@ Also preserve highlights when `rectangle-mark-mode' is active."
    (t
     (unless (helixel--end-of-line-p)
       (forward-char))
-    (setq helixel--repeat-sel-ctx nil)))
+    (helixel--repeat-sel-clear)))
   (helixel--record-edit 'insert-text)
   (setq helixel--change-track-marker (point-marker))
   (helixel--enter-insert))
@@ -412,7 +412,7 @@ Also preserve highlights when `rectangle-mark-mode' is active."
 (helixel-define-command helixel-insert-beginning-line
     (:category state :subcat insert)
   (beginning-of-line)
-  (setq helixel--repeat-sel-ctx
+   (helixel--repeat-sel-set
         (helixel-sel-create
          'insert-beginning-line nil
          #'helixel--recreate-insert-beginning-line "I"))
@@ -423,7 +423,7 @@ Also preserve highlights when `rectangle-mark-mode' is active."
 (helixel-define-command helixel-insert-after-end-line
     (:category state :subcat insert)
   (end-of-line)
-  (setq helixel--repeat-sel-ctx
+   (helixel--repeat-sel-set
         (helixel-sel-create
          'insert-end-line nil
          #'helixel--recreate-insert-end-line "A"))

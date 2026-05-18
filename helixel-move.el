@@ -249,9 +249,9 @@ automatically, so this macro only does `push-mark' + activate."
         (call-interactively #'next-line)
         (end-of-line)))
     (setq helixel--selection-type 'line)
-    (let* ((prev-count (helixel-sel-count helixel--repeat-sel-ctx))
+    (let* ((prev-count (helixel-sel-count (helixel--repeat-sel-get)))
            (new-count (if extending (+ prev-count n) n)))
-      (setq helixel--repeat-sel-ctx
+      (helixel--repeat-sel-set
             (helixel-sel-create 'line `(:dir forward :count ,new-count)
                                 #'helixel--recreate-line
                                 (if (> new-count 1)
@@ -278,7 +278,7 @@ automatically, so this macro only does `push-mark' + activate."
     (setq helixel--selection-type 'line)
     (let* ((prev-count (helixel-sel-count helixel--repeat-sel-ctx))
            (new-count (if extending (+ prev-count n) n)))
-      (setq helixel--repeat-sel-ctx
+      (helixel--repeat-sel-set
             (helixel-sel-create 'line `(:dir backward :count ,new-count)
                                 #'helixel--recreate-line
                                 (if (> new-count 1)
@@ -307,9 +307,9 @@ automatically, so this macro only does `push-mark' + activate."
         (forward-line 1)
         (rectangle--reset-point-crutches)))
     (setq helixel--selection-type 'rect)
-    (let* ((prev-count (helixel-sel-count helixel--repeat-sel-ctx))
+    (let* ((prev-count (helixel-sel-count (helixel--repeat-sel-get)))
            (new-count (if extending (+ prev-count n) n)))
-      (setq helixel--repeat-sel-ctx
+      (helixel--repeat-sel-set
             (helixel-sel-create 'rect `(:count ,new-count)
                                 #'helixel--recreate-rect
                                 (if (> new-count 1)
