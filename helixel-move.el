@@ -219,15 +219,19 @@ automatically, so this macro only does `push-mark' + activate."
 (helixel-define-command helixel-go-beginning-buffer
     (:category movement :subcat goto)
   (if current-prefix-arg
-      (goto-line (prefix-numeric-value current-prefix-arg))
+      (let ((n (prefix-numeric-value current-prefix-arg)))
+        (goto-char (point-min))
+        (forward-line (1- n)))
     (call-interactively #'beginning-of-buffer)))
 
 (helixel-define-command helixel-goto-line
     (:category movement :subcat goto :params (&optional arg))
   (interactive "P")
-  (goto-line (if arg
-                 (prefix-numeric-value arg)
-               (goto-line-read-args))))
+  (let ((n (if arg
+               (prefix-numeric-value arg)
+             (goto-line-read-args))))
+    (goto-char (point-min))
+    (forward-line (1- n))))
 
 ;; ── Line / Rect selection ──
 
