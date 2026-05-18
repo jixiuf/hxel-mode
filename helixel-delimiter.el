@@ -87,8 +87,7 @@ Returns 0 on success, non-zero on failure.  Moves point and sets `match-data'."
 (defun helixel-delimiter-bounds (d)
   "Return ((OB . OE) . (CB . CE)) for the innermost delimiter D at point.
 OB, OE: open delimiter beg/end.  CB, CE: close delimiter beg/end."
-  (let* ((type (helixel-delimiter-type d))
-         (close (helixel-delimiter-close d)))
+  (let ((close (helixel-delimiter-close d)))
     (when (eobp) (skip-chars-backward " \t\n\r"))
     (when (and (characterp close) (> (point) 1) (= (char-before) close))
       (backward-char))
@@ -114,10 +113,10 @@ Returns (OPEN-END . CLOSE-BEG)."
 ;; Builder — construct delimiter plists for each type
 ;; ---------------------------------------------------------------------------
 
-(declare-function helixel-up-paren "helixel-textobj")
-(declare-function helixel-up-xml-tag "helixel-textobj")
-(declare-function helixel-up-block-at-point "helixel-textobj")
-(declare-function helixel-up-regex-block "helixel-textobj")
+(declare-function helixel-up-paren "helixel-textobj-engine")
+(declare-function helixel-up-xml-tag "helixel-textobj-engine")
+(declare-function helixel-up-block-at-point "helixel-textobj-engine")
+(declare-function helixel-up-regex-block "helixel-textobj-engine")
 
 (defun helixel--make-pair-delimiter (open close)
   "Create a pair delimiter for OPEN and CLOSE characters."

@@ -14,7 +14,8 @@
 | `helixel-common.el` | Editing commands (kill, change, copy, replace, yank) + selection recreate + op runners. |
 | `helixel-keymap.el` | All keymaps. Populates `helixel-state-map-alist`. |
 | `helixel-search.el` | Search/find-char + `n`/`N` repeat. |
-| `helixel-textobj.el` | Text objects (word, pair, quote, tag, …). |
+| `helixel-textobj-engine.el` | Selection engine: motion-loop, select-block, up-paren, up-block, regex-block, word/symbol/sentence/paragraph forward. No helixel-state deps. |
+| `helixel-textobj.el` | Text object command macros + concretions + keymaps + recreate. Depends on textobj-engine. |
 | `helixel-delimiter.el` | Delimiter protocol for surround/textobj. |
 | `helixel-surround.el` | Surround add/delete/replace. |
 | `helixel-test.el` | ERT tests (~512). |
@@ -24,6 +25,8 @@
 ```
 helixel-edit → helixel-action → helixel-repeat → helixel-state
 → helixel-move → helixel-common → helixel-keymap → helixel-search
+
+helixel-delimiter → helixel-textobj-engine → helixel-textobj → helixel-surround
 ```
 
 ## Key Structs
