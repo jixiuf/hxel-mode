@@ -329,55 +329,6 @@ Example:
 (helixel-define-mark-quote "double-quote" ?\" "double-quoted string" nil)
 (helixel-define-mark-quote "back-quote" ?` "back-quoted string" t)
 (helixel-define-mark-quote "back-quote" ?` "back-quoted string" nil)
-;; ============================================================================
-;; Keymaps
-;; ============================================================================
-
-(defvar-keymap helixel-textobj-inner-map
-  "w"  #'helixel-mark-inner-word
-  "W"  #'helixel-mark-inner-WORD
-  "o"  #'helixel-mark-inner-symbol
-  "s"  #'helixel-mark-inner-sentence
-  "p"  #'helixel-mark-inner-paragraph
-  "("  #'helixel-mark-inner-paren
-  ")"  #'helixel-mark-inner-paren
-  "b"  #'helixel-mark-inner-paren
-  "["  #'helixel-mark-inner-bracket
-  "]"  #'helixel-mark-inner-bracket
-  "B"  #'helixel-mark-inner-brace
-  "{"  #'helixel-mark-inner-brace
-  "}"  #'helixel-mark-inner-brace
-  "<"  #'helixel-mark-inner-angle
-  ">"  #'helixel-mark-inner-angle
-  "t"  #'helixel-mark-inner-tag
-  "c"  #'helixel-mark-inner-block
-  "\`" #'helixel-mark-inner-back-quote
-  "'"  #'helixel-mark-inner-single-quote
-  "\"" #'helixel-mark-inner-double-quote)
-
-(defvar-keymap helixel-textobj-outer-map
-  "w"  #'helixel-mark-a-word
-  "W"  #'helixel-mark-a-WORD
-  "o"  #'helixel-mark-a-symbol
-  "s"  #'helixel-mark-a-sentence
-  "p"  #'helixel-mark-a-paragraph
-  "("  #'helixel-mark-a-paren
-  ")"  #'helixel-mark-a-paren
-  "b"  #'helixel-mark-a-paren
-  "["  #'helixel-mark-a-bracket
-  "]"  #'helixel-mark-a-bracket
-  "B"  #'helixel-mark-a-brace
-  "{"  #'helixel-mark-a-brace
-  "}"  #'helixel-mark-a-brace
-  "<"  #'helixel-mark-a-angle
-  ">"  #'helixel-mark-a-angle
-  "t"  #'helixel-mark-a-tag
-  "c"  #'helixel-mark-a-block
-  "\`" #'helixel-mark-a-back-quote
-  "'"  #'helixel-mark-a-single-quote
-  "\"" #'helixel-mark-a-double-quote)
-
-
 
 (defun helixel--recreate-textobj (ctx)
   "Replay a textobj selection from CTX.

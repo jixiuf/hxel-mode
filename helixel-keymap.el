@@ -83,9 +83,52 @@
 (define-key helixel-window-map "q" #'delete-window)
 (define-key helixel-window-map "o" #'delete-other-windows)
 
-;; ── Textobj prefix keymap ──
+;; ── Textobj keymap ──
 
-;; inherit parent map's bindings
+;; Populate outer-map (shell created in helixel-state.el)
+(define-key helixel-textobj-outer-map "w"  #'helixel-mark-a-word)
+(define-key helixel-textobj-outer-map "W"  #'helixel-mark-a-WORD)
+(define-key helixel-textobj-outer-map "o"  #'helixel-mark-a-symbol)
+(define-key helixel-textobj-outer-map "s"  #'helixel-mark-a-sentence)
+(define-key helixel-textobj-outer-map "p"  #'helixel-mark-a-paragraph)
+(define-key helixel-textobj-outer-map "("  #'helixel-mark-a-paren)
+(define-key helixel-textobj-outer-map ")"  #'helixel-mark-a-paren)
+(define-key helixel-textobj-outer-map "b"  #'helixel-mark-a-paren)
+(define-key helixel-textobj-outer-map "["  #'helixel-mark-a-bracket)
+(define-key helixel-textobj-outer-map "]"  #'helixel-mark-a-bracket)
+(define-key helixel-textobj-outer-map "B"  #'helixel-mark-a-brace)
+(define-key helixel-textobj-outer-map "{"  #'helixel-mark-a-brace)
+(define-key helixel-textobj-outer-map "}"  #'helixel-mark-a-brace)
+(define-key helixel-textobj-outer-map "<"  #'helixel-mark-a-angle)
+(define-key helixel-textobj-outer-map ">"  #'helixel-mark-a-angle)
+(define-key helixel-textobj-outer-map "t"  #'helixel-mark-a-tag)
+(define-key helixel-textobj-outer-map "c"  #'helixel-mark-a-block)
+(define-key helixel-textobj-outer-map "\`" #'helixel-mark-a-back-quote)
+(define-key helixel-textobj-outer-map "'"  #'helixel-mark-a-single-quote)
+(define-key helixel-textobj-outer-map "\"" #'helixel-mark-a-double-quote)
+
+;; Populate inner-map (shell created in helixel-state.el)
+(define-key helixel-textobj-inner-map "w"  #'helixel-mark-inner-word)
+(define-key helixel-textobj-inner-map "W"  #'helixel-mark-inner-WORD)
+(define-key helixel-textobj-inner-map "o"  #'helixel-mark-inner-symbol)
+(define-key helixel-textobj-inner-map "s"  #'helixel-mark-inner-sentence)
+(define-key helixel-textobj-inner-map "p"  #'helixel-mark-inner-paragraph)
+(define-key helixel-textobj-inner-map "("  #'helixel-mark-inner-paren)
+(define-key helixel-textobj-inner-map ")"  #'helixel-mark-inner-paren)
+(define-key helixel-textobj-inner-map "b"  #'helixel-mark-inner-paren)
+(define-key helixel-textobj-inner-map "["  #'helixel-mark-inner-bracket)
+(define-key helixel-textobj-inner-map "]"  #'helixel-mark-inner-bracket)
+(define-key helixel-textobj-inner-map "B"  #'helixel-mark-inner-brace)
+(define-key helixel-textobj-inner-map "{"  #'helixel-mark-inner-brace)
+(define-key helixel-textobj-inner-map "}"  #'helixel-mark-inner-brace)
+(define-key helixel-textobj-inner-map "<"  #'helixel-mark-inner-angle)
+(define-key helixel-textobj-inner-map ">"  #'helixel-mark-inner-angle)
+(define-key helixel-textobj-inner-map "t"  #'helixel-mark-inner-tag)
+(define-key helixel-textobj-inner-map "c"  #'helixel-mark-inner-block)
+(define-key helixel-textobj-inner-map "\`" #'helixel-mark-inner-back-quote)
+(define-key helixel-textobj-inner-map "'"  #'helixel-mark-inner-single-quote)
+(define-key helixel-textobj-inner-map "\"" #'helixel-mark-inner-double-quote)
+
 (set-keymap-parent helixel-textobj-map helixel-textobj-inner-map)
 (define-key helixel-textobj-map "i" helixel-textobj-inner-map)
 (define-key helixel-textobj-map "a" helixel-textobj-outer-map)
@@ -93,7 +136,6 @@
 (define-key helixel-textobj-map "t" #'helixel-surround-add-tag)
 (define-key helixel-textobj-map "d" #'helixel-surround-delete)
 (define-key helixel-textobj-map "r" #'helixel-surround-replace)
-
 ;; ── State keymaps ──
 
 ;; helixel-normal-map
