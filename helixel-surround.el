@@ -58,6 +58,16 @@
 (declare-function helixel-up-paren "helixel-textobj-engine")
 (declare-function helixel--record-edit "helixel-repeat")
 (declare-function helixel-action-start "helixel-action")
+(declare-function helixel-textobj-after-select-functions
+                  "helixel-textobj-engine")
+(defvar helixel-textobj-after-select-functions)
+(defvar helixel-textobj-inner-map)
+(defvar helixel-textobj-outer-map)
+
+(defvar helixel--pending-surround-op nil
+  "If non-nil, a thunk to execute after the next textobj selection.
+Bound by `helixel-surround-delete' / `helixel-surround-replace' when
+the selection lacks surround info.  Cleared after execution.")
 
 ;; ============================================================================
 ;; Block alist — per-mode string-based surround pairs
@@ -233,8 +243,15 @@ Returns position where point should be placed after deletion."
 
 (defun helixel--surround-replace-generic (d)
   "Replace delimiters described by D by prompting for new delimiter.
-Reads character, looks up new delimiter, deletes old, adds new."
-  (let* ((new-char (read-char (helixel--surround-prompt "mr")))
+Reads character, looks up new delimiter, deletes old, adds new.
+The prompt shows the old delimiter being replaced."
+  (let* ((old-type (helixel-delimiter-type d))
+         (old-label (pcase old-type
+                      ('pair (format "%c" (helixel-delimiter-open d)))
+                      ('quote (format "%c" (helixel-delimiter-open d)))
+                      (_ (symbol-name old-type))))
+         (prompt (format "replace %s ->" old-label))
+         (new-char (read-char (helixel--surround-prompt prompt)))
          (new-d (helixel--surround-lookup-delimiter new-char)))
     (unless new-d
       (user-error "Unknown surround delimiter: %c" new-char))
@@ -332,56 +349,77 @@ D is the tag delimiter plist used to locate the tags."
 
 (defun helixel-surround-delete ()
   "Delete surrounding delimiters of the current selection.
-Uses `helixel--repeat-sel-ctx' to determine the delimiter type."
+Uses `helixel--repeat-sel-ctx' to determine the delimiter type.
+When the selection lacks surround info, activates textobj keys
+so the user can select a target with one keypress."
   (interactive)
   (let ((sel-ctx (helixel--repeat-sel-get))
         d)
-    (unless (and sel-ctx (setq d (helixel-sel-surround-delimiter sel-ctx)))
-      (if (use-region-p)
-          (user-error
-           (concat "Selection does not have surround information; "
-                   "use a text object (mi(, ma[, mi t, etc.) first"))
-        (user-error "No previous selection with surround information")))
-    (when (use-region-p)
-      (goto-char (/ (+ (region-beginning) (region-end)) 2)))
-    (let ((pos (helixel--surround-delete-delimiter d)))
-      (goto-char pos)
-      (helixel-action-start 'edit 'surround-delete)
-      (helixel--record-edit 'surround-delete))))
+    (if (and sel-ctx (setq d (helixel-sel-surround-delimiter sel-ctx)))
+        (progn
+          (when (use-region-p)
+            (goto-char (/ (+ (region-beginning) (region-end)) 2)))
+          (let ((pos (helixel--surround-delete-delimiter d)))
+            (goto-char pos)
+            (helixel-action-start 'edit 'surround-delete)
+            (helixel--record-edit 'surround-delete)))
+      (setq helixel--pending-surround-op #'helixel-surround-delete)
+      (let ((map (make-sparse-keymap))
+            (done nil))
+        (set-keymap-parent map helixel-textobj-inner-map)
+        (define-key map "a" helixel-textobj-outer-map)
+        (set-transient-map
+         map
+         (lambda () (prog1 (not done) (setq done t)))
+         (lambda ()
+           (when helixel--pending-surround-op
+             (setq helixel--pending-surround-op nil)
+             (message "md: no matching target found, cancelled")))
+         "md: select target (( [ { \" ')")))))
 
 (defun helixel-surround-replace ()
   "Replace surrounding delimiters.
 Reads `helixel--repeat-sel-ctx' for delimiter type.
-Prompts per type: tag `read-string', all others `read-char'."
+Prompts per type: tag `read-string', all others `read-char'.
+When the selection lacks surround info, activates textobj keys
+so the user can select a target with one keypress."
   (interactive)
   (let ((sel-ctx (helixel--repeat-sel-get))
         d)
-    (unless (and sel-ctx (setq d (helixel-sel-surround-delimiter sel-ctx)))
-      (if (use-region-p)
-          (user-error
-           (concat "Selection does not have surround information; "
-                   "use a text object (mi(, ma[, mi t, etc.) first"))
-        (user-error "No previous selection with surround information")))
-    (let ((type (helixel-delimiter-type d)))
-      (pcase type
-        ('tag
-         (let ((new-tag (read-string "Tag: ")))
-           (when (use-region-p)
-             (goto-char (/ (+ (region-beginning) (region-end)) 2)))
-           (helixel--surround-replace-tag new-tag d)
-           (helixel-action-start 'edit 'surround-replace)
-           (helixel--record-edit 'surround-replace :tag new-tag
-                                 :surround-type 'tag)
-            (helixel--repeat-sel-set
-                 (helixel-sel-create
-                  'surround `(:delimiter ,(helixel--make-tag-delimiter))
-                  (lambda (_) nil)
-                  (lambda (c)
-                    (if-let* ((d2 (helixel-sel-surround-delimiter c)))
-                        (format "@%s" (helixel-delimiter-type d2))
-                      "surround"))))))
-        (_ (helixel--surround-replace-generic d)))
-      (setq deactivate-mark nil))))
+    (if (and sel-ctx (setq d (helixel-sel-surround-delimiter sel-ctx)))
+        (let ((type (helixel-delimiter-type d)))
+          (pcase type
+            ('tag
+             (let ((new-tag (read-string "Tag: ")))
+               (when (use-region-p)
+                 (goto-char (/ (+ (region-beginning) (region-end)) 2)))
+               (helixel--surround-replace-tag new-tag d)
+               (helixel-action-start 'edit 'surround-replace)
+               (helixel--record-edit 'surround-replace :tag new-tag
+                                     :surround-type 'tag)
+               (helixel--repeat-sel-set
+                (helixel-sel-create
+                 'surround `(:delimiter ,(helixel--make-tag-delimiter))
+                 (lambda (_) nil)
+                 (lambda (c)
+                   (if-let* ((d2 (helixel-sel-surround-delimiter c)))
+                       (format "@%s" (helixel-delimiter-type d2))
+                     "surround"))))))
+            (_ (helixel--surround-replace-generic d)))
+          (setq deactivate-mark nil))
+      (setq helixel--pending-surround-op #'helixel-surround-replace)
+      (let ((map (make-sparse-keymap))
+            (done nil))
+        (set-keymap-parent map helixel-textobj-inner-map)
+        (define-key map "a" helixel-textobj-outer-map)
+        (set-transient-map
+         map
+         (lambda () (prog1 (not done) (setq done t)))
+         (lambda ()
+           (when helixel--pending-surround-op
+             (setq helixel--pending-surround-op nil)
+             (message "mr: no matching target found, cancelled")))
+         "mr: select target (( [ { \" ')")))))
 
 ;; ============================================================================
 ;; Selection-descriptor method
@@ -436,6 +474,24 @@ Prompts per type: tag `read-string', all others `read-char'."
                      (when-let* ((pair (helixel--surround-lookup new-char)))
                        (helixel--surround-delete-delimiter d)
                        (helixel--surround-add (car pair) (cdr pair))))))))))
+
+;; ============================================================================
+;; Pending surround op — auto-retry after textobj selection
+;; ============================================================================
+
+(defun helixel--surround-execute-pending ()
+  "Execute pending surround op if a textobj with surround info was selected.
+Clears `helixel--pending-surround-op' regardless."
+  (when helixel--pending-surround-op
+    (let ((op helixel--pending-surround-op))
+      (setq helixel--pending-surround-op nil)
+      (when (and helixel--repeat-sel-ctx
+                 (helixel-sel-surround-delimiter
+                  helixel--repeat-sel-ctx))
+        (funcall op)))))
+
+(add-hook 'helixel-textobj-after-select-functions
+          #'helixel--surround-execute-pending)
 
 (provide 'helixel-surround)
 ;;; helixel-surround.el ends here

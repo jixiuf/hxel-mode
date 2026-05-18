@@ -45,6 +45,11 @@
 (defvar helixel-textobj-visual-state-p-function nil
   "If non-nil, called with no args, return t when in visual state.")
 
+(defvar helixel-textobj-after-select-functions nil
+  "Hook run after a textobj selection is activated.
+Called with no arguments.  Use this to chain operations that need
+a textobj selection to be in place (e.g. pending surround ops).")
+
 
 ;; ============================================================================
 
@@ -1197,7 +1202,8 @@ the same multiplier."
                (if-let* ((command (helixel-sel-textobj-command c)))
                    (replace-regexp-in-string "^helixel-mark-" ""
                                             (symbol-name command))
-                 "textobj")))))))
+                 "textobj"))))
+      (run-hook-with-args 'helixel-textobj-after-select-functions))))
 
 
 (defun helixel-select-xml-tag (beg end type &optional count inclusive)
